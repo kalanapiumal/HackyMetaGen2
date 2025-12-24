@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { 
   Upload, 
   FileImage, 
@@ -17,11 +17,14 @@ import {
   Loader2,
   AlertCircle,
   LayoutGrid,
-  Maximize2
+  Maximize2,
+  Info,
+  Zap,
+  ZapOff
 } from 'lucide-react';
 
 /**
- * Hacky MetaGen 1.1 - Adobe Stock Metadata Generator
+ * Hacky MetaGen 1.5 - Adobe Stock Metadata Generator
  * Built with React + Tailwind CSS + Gemini API
  */
 
@@ -34,6 +37,16 @@ const HackyMetaGenApp = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [viewMode, setViewMode] = useState('batch'); // Changed default to 'batch'
   const [copiedId, setCopiedId] = useState(null); // To track which element triggered copy
+  
+  // Auto Generate State
+  const [isAutoGenerate, setIsAutoGenerate] = useState(true);
+
+  // Drag and Drop Global State
+  const [isGlobalDragging, setIsGlobalDragging] = useState(false);
+  const dragCounter = useRef(0);
+
+  // Session Management for cancelling pending operations on reset
+  const sessionId = useRef(0);
   
   // Animation State for Feature Badge
   const [featureIndex, setFeatureIndex] = useState(0);
@@ -52,12 +65,18 @@ const HackyMetaGenApp = () => {
         setFeatureIndex((prev) => (prev + 1) % features.length);
         setFadeClass('opacity-100 translate-y-0');
       }, 300);
-    }, 5000); // Increased from 3000 to 5000 for slower animation
+    }, 5000); // Animation speed
     return () => clearInterval(interval);
   }, []);
   
-  // API Key Handling: Support both environment injection and user input
+  // API Key Handling
   const [userApiKey, setUserApiKey] = useState(''); 
+  const [isKeySaved, setIsKeySaved] = useState(false); // Track if key is saved for UI state
+  const [isKeyInvalid, setIsKeyInvalid] = useState(false); // Track if verification failed
+  const [showSuccessMessage, setShowSuccessMessage] = useState(false); // Track success message visibility
+  const [showErrorMessage, setShowErrorMessage] = useState(false); // Track error message visibility
+  const [showTutorial, setShowTutorial] = useState(false); // Track tutorial modal visibility
+  const [isVerifying, setIsVerifying] = useState(false); // Loading state for key check
   const envApiKey = ""; // The execution environment provides the key at runtime
   
   const fileInputRef = useRef(null);
@@ -65,13 +84,54 @@ const HackyMetaGenApp = () => {
   // Load API Key from local storage on mount
   useEffect(() => {
     const savedKey = localStorage.getItem('hackymetagen_api_key');
-    if (savedKey) setUserApiKey(savedKey);
+    if (savedKey) {
+      setIsKeySaved(true);
+      // We don't populate userApiKey here to keep the input clear for the placeholder message
+    }
   }, []);
 
-  const handleApplyKey = () => {
-    if (userApiKey.trim()) {
-      localStorage.setItem('hackymetagen_api_key', userApiKey);
-      alert("API Key saved to browser storage!");
+  const handleApplyKey = async () => {
+    const keyToTest = userApiKey.trim();
+    if (!keyToTest) return;
+
+    setIsVerifying(true);
+
+    try {
+      // Validate Key by making a lightweight call to the Models list endpoint
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${keyToTest}&pageSize=1`);
+      
+      if (response.ok) {
+        // --- Success Path ---
+        localStorage.setItem('hackymetagen_api_key', keyToTest);
+        setIsKeySaved(true);
+        setIsKeyInvalid(false);
+        setUserApiKey(''); // Clear input to show success placeholder
+        
+        setShowSuccessMessage(true);
+        setShowErrorMessage(false);
+        
+        setTimeout(() => {
+          setShowSuccessMessage(false);
+        }, 5000);
+      } else {
+        throw new Error("Invalid API Key");
+      }
+    } catch (error) {
+      // --- Error Path ---
+      // Log removed to prevent console noise
+      setIsKeyInvalid(true);
+      setIsKeySaved(false);
+      setUserApiKey(''); // Clear input to show error placeholder
+      
+      setShowErrorMessage(true);
+      setShowSuccessMessage(false);
+      
+      setTimeout(() => {
+        setShowErrorMessage(false);
+        // We keep isKeyInvalid true until user types again for the visual red effect
+      }, 5000);
+    } finally {
+      setIsVerifying(false);
     }
   };
 
@@ -85,28 +145,109 @@ const HackyMetaGenApp = () => {
     setTheme(prev => prev === 'light' ? 'dark' : 'light');
   };
 
-  // --- Helper: Handle File Upload ---
-  const handleFileUpload = (e) => {
-    const uploadedFiles = Array.from(e.target.files);
-    
-    const newFiles = uploadedFiles.map(file => {
+  // --- Helper: Generate Thumbnail ---
+  const generateThumbnail = async (file) => {
+    if (file.type.startsWith('video/')) {
+      return new Promise((resolve) => {
+        const video = document.createElement('video');
+        video.preload = 'metadata';
+        video.src = URL.createObjectURL(file);
+        video.muted = true;
+        video.playsInline = true;
+        video.currentTime = 1; // Seek to 1 second to grab a frame
+
+        video.onloadeddata = () => {
+          // If video is shorter than 1s, seek to 0
+          if (video.duration < 1) video.currentTime = 0;
+        };
+
+        video.onseeked = () => {
+          const canvas = document.createElement('canvas');
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          const dataUrl = canvas.toDataURL('image/jpeg');
+          URL.revokeObjectURL(video.src);
+          resolve(dataUrl);
+        };
+
+        video.onerror = () => {
+          URL.revokeObjectURL(video.src);
+          resolve(null); // Fallback if fails
+        };
+      });
+    } else {
+      // For images, just return the object URL
+      return URL.createObjectURL(file);
+    }
+  };
+
+  // --- Helper: Run Batch Generation (Logic) ---
+  const runBatchGeneration = async (filesToProcess) => {
+     // This function processes a specific list of files
+     // It assumes the UI state 'isProcessing' is managed by the caller if needed
+     
+     await Promise.all(filesToProcess.map(async (file) => {
+        try {
+          const jsonResult = await performGeneration(file);
+          const kwArray = jsonResult.keywords.split(',').map(k => k.trim());
+          const analysis = {
+            short: kwArray.filter(k => k.split(' ').length <= 2).length,
+            mid: kwArray.filter(k => k.split(' ').length === 3).length,
+            long: kwArray.filter(k => k.split(' ').length >= 4).length,
+            total: kwArray.length
+          };
+          
+          // Update State Incrementally (Show complete ones first)
+          // IMPORTANT: Check if file still exists in state (wasn't reset)
+          setFiles(prev => {
+            // If the file is not in the current state (because of reset), don't add it back or update it
+            if (!prev.find(f => f.id === file.id)) return prev;
+
+            return prev.map(f => 
+              f.id === file.id ? { 
+                ...f, 
+                status: 'complete', 
+                metadata: jsonResult,
+                keywordAnalysis: analysis
+              } : f
+            );
+          });
+
+        } catch (error) {
+          console.error(`Error processing ${file.name}:`, error);
+          setFiles(prev => prev.map(f => f.id === file.id ? { ...f, status: 'error' } : f));
+        }
+      }));
+  };
+
+  // --- Helper: Process Files (Upload Handler) ---
+  const processUploadedFiles = useCallback(async (uploadedFiles) => {
+    // Capture the current session ID when upload starts
+    const currentSession = sessionId.current;
+
+    // Create initial file objects
+    const newFilesPromises = uploadedFiles.map(async (file) => {
       let fileName = file.name;
       const isMov = fileName.toLowerCase().endsWith('.mov');
 
-      // Logic: If image, default to .ai extension
-      // EXCEPTION: If the file is .mov, preserve it regardless of current tab (per user rule)
       if (contentType === 'image' && !isMov) {
-        // Replace current extension with .ai for default selection
         fileName = fileName.replace(/\.[^/.]+$/, "") + ".ai";
       }
+
+      const previewUrl = await generateThumbnail(file);
+
+      // Determine initial status based on Auto Generate setting
+      const initialStatus = isAutoGenerate ? 'processing' : 'pending';
 
       return {
         id: crypto.randomUUID(),
         file,
-        name: fileName, // Store the modified name
-        preview: URL.createObjectURL(file),
+        name: fileName,
+        preview: previewUrl,
         type: contentType,
-        status: 'pending', // pending, processing, complete, error
+        status: initialStatus, 
         metadata: {
           title: '',
           keywords: ''
@@ -115,9 +256,87 @@ const HackyMetaGenApp = () => {
       };
     });
 
-    setFiles(prev => [...prev, ...newFiles]);
-    if (!selectedFileId && newFiles.length > 0) {
-      setSelectedFileId(newFiles[0].id);
+    const newFiles = await Promise.all(newFilesPromises);
+
+    // CRITICAL: Check if reset happened while waiting for thumbnails
+    if (currentSession !== sessionId.current) {
+        return; // Stop processing, user reset the app
+    }
+
+    setFiles(prev => {
+        const updated = [...prev, ...newFiles];
+        if (!selectedFileId && updated.length > 0) {
+           // setSelectedFileId(updated[0].id); // Can't set state derived from prev here safely without another ref
+        }
+        return updated;
+    });
+    
+    // Select first file if none selected
+    if (files.length === 0 && newFiles.length > 0) {
+        setSelectedFileId(newFiles[0].id);
+    }
+
+    // AUTO GENERATE LOGIC
+    if (isAutoGenerate) {
+        // Trigger generation for these specific new files immediately
+        // We don't block the UI, just run it
+        runBatchGeneration(newFiles);
+    }
+
+  }, [contentType, files.length, selectedFileId, isAutoGenerate]);
+
+  // --- Global Drag and Drop Handlers ---
+  useEffect(() => {
+    const handleDragEnter = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dragCounter.current += 1;
+      if (e.dataTransfer.items && e.dataTransfer.items.length > 0) {
+        setIsGlobalDragging(true);
+      }
+    };
+
+    const handleDragLeave = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dragCounter.current -= 1;
+      if (dragCounter.current === 0) {
+        setIsGlobalDragging(false);
+      }
+    };
+
+    const handleDragOver = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    };
+
+    const handleDrop = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setIsGlobalDragging(false);
+      dragCounter.current = 0;
+      if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        processUploadedFiles(Array.from(e.dataTransfer.files));
+      }
+    };
+
+    window.addEventListener('dragenter', handleDragEnter);
+    window.addEventListener('dragleave', handleDragLeave);
+    window.addEventListener('dragover', handleDragOver);
+    window.addEventListener('drop', handleDrop);
+
+    return () => {
+      window.removeEventListener('dragenter', handleDragEnter);
+      window.removeEventListener('dragleave', handleDragLeave);
+      window.removeEventListener('dragover', handleDragOver);
+      window.removeEventListener('drop', handleDrop);
+    };
+  }, [processUploadedFiles]);
+
+  // --- Helper: Handle File Input Change ---
+  const handleFileUpload = (e) => {
+    if (e.target.files && e.target.files.length > 0) {
+      processUploadedFiles(Array.from(e.target.files));
     }
   };
 
@@ -127,6 +346,35 @@ const HackyMetaGenApp = () => {
     setFiles(prev => prev.filter(f => f.id !== id));
     if (selectedFileId === id) {
       setSelectedFileId(null);
+    }
+  };
+
+  // --- Helper: Reset Uploads ---
+  const handleResetUploads = () => {
+    if (files.length === 0) return;
+    
+    // Increment session ID to invalidate any pending upload processing
+    sessionId.current += 1;
+
+    // 1. Cleanup: Revoke object URLs to free up browser memory
+    files.forEach(file => {
+        if (file.preview && file.preview.startsWith('blob:')) {
+            URL.revokeObjectURL(file.preview);
+        }
+    });
+
+    // 2. Clear State
+    setFiles([]);
+    setSelectedFileId(null);
+    
+    // 3. Reset View and Processing States
+    setViewMode('batch');
+    setIsProcessing(false);
+    setIsGlobalDragging(false);
+    
+    // 4. Reset File Input Value
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
     }
   };
 
@@ -140,9 +388,8 @@ const HackyMetaGenApp = () => {
     }));
   };
 
-  // --- Helper: Extract Video Frame ---
-  // This extracts a thumbnail from a video file to send to the AI instead of the whole video
-  const extractVideoFrame = (file) => {
+  // --- Helper: Extract Video Frames (Multiple) ---
+  const extractVideoFrames = (file, frameCount = 5) => {
     return new Promise((resolve, reject) => {
       const video = document.createElement('video');
       const canvas = document.createElement('canvas');
@@ -154,27 +401,54 @@ const HackyMetaGenApp = () => {
       video.playsInline = true;
       video.crossOrigin = "anonymous";
 
-      // When metadata loads, seek to 1 second (or 10% if short) to catch action
+      const frames = [];
+      let currentFrame = 0;
+
       video.onloadedmetadata = () => {
-        video.currentTime = Math.min(1.0, video.duration > 0 ? video.duration * 0.1 : 0);
+        const duration = video.duration;
+        const step = duration / frameCount;
+        
+        const captureFrame = () => {
+          if (currentFrame >= frameCount) {
+            URL.revokeObjectURL(url);
+            resolve(frames);
+            return;
+          }
+
+          const time = (step * currentFrame) + (step / 2);
+          video.currentTime = Math.min(time, duration - 0.1); 
+        };
+
+        video.onseeked = () => {
+          let width = video.videoWidth;
+          let height = video.videoHeight;
+          const maxDim = 1280;
+          
+          if (width > maxDim || height > maxDim) {
+            const ratio = width / height;
+            if (width > height) {
+              width = maxDim;
+              height = maxDim / ratio;
+            } else {
+              height = maxDim;
+              width = maxDim * ratio;
+            }
+          }
+
+          canvas.width = width;
+          canvas.height = height;
+          ctx.drawImage(video, 0, 0, width, height);
+          
+          frames.push(canvas.toDataURL('image/jpeg', 0.7).split(',')[1]);
+          
+          currentFrame++;
+          captureFrame(); 
+        };
+
+        captureFrame();
       };
 
-      // When seek completes, draw frame
-      video.onseeked = () => {
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        
-        // Convert to base64 jpeg (standard quality)
-        // .split(',')[1] removes the "data:image/jpeg;base64," prefix
-        const base64 = canvas.toDataURL('image/jpeg', 0.8).split(',')[1];
-        
-        // Clean up
-        URL.revokeObjectURL(url);
-        resolve(base64);
-      };
-
-      video.onerror = (e) => {
+      video.onerror = () => {
         URL.revokeObjectURL(url);
         reject(new Error("Failed to load video for frame extraction"));
       };
@@ -184,24 +458,25 @@ const HackyMetaGenApp = () => {
   // --- Core: API Call Logic ---
   const performGeneration = async (fileObj) => {
     // 1. Setup API Key
-    const activeKey = userApiKey || envApiKey;
+    const activeKey = userApiKey || localStorage.getItem('hackymetagen_api_key') || envApiKey;
     
     // Note: Removed client-side validation for empty API key to allow environment variables/proxies to function.
 
     // 2. Determine File Type & Process Content
     let mimeType = '';
-    let base64Data = '';
+    let base64Data = null; // Can be string or array of strings
     const ext = fileObj.file.name.split('.').pop().toLowerCase();
     
     // Check if it's a video based on mime type or extension
     const isVideo = fileObj.file.type.startsWith('video/') || ['mov', 'mp4', 'avi', 'webm', 'mkv'].includes(ext);
 
     if (isVideo) {
-        // Video Path: Extract Frame
+        // Video Path: Extract Multiple Frames
         try {
-            base64Data = await extractVideoFrame(fileObj.file);
-            // We are sending a JPEG image of the video frame to the AI
-            mimeType = 'image/jpeg'; 
+            // Extract 5 frames to understand the whole video context
+            const frames = await extractVideoFrames(fileObj.file, 5);
+            base64Data = frames; // Array of strings
+            mimeType = 'image/jpeg'; // Frames are converted to JPEGs
         } catch (err) {
             console.error("Video processing failed:", err);
             throw new Error(`Video processing error: ${err.message}`);
@@ -247,7 +522,7 @@ const HackyMetaGenApp = () => {
     const systemPrompt = `
       You are Hacky MetaGen 1.0, a senior SEO expert for Adobe Stock.
       Your goal is to generate metadata for this ${fileObj.type} to maximize discoverability.
-      ${isVideo ? "Note: The input provided is a representative visual frame extracted from a video file." : ""}
+      ${isVideo ? "Note: The input provided is a sequence of 5 frames extracted from the video to represent the WHOLE video action/story." : ""}
       
       STRICT RULES:
       1. **Title**: 100-125 characters. Natural, readable, descriptive. Include high-value keywords. NO keyword stuffing.
@@ -275,15 +550,25 @@ const HackyMetaGenApp = () => {
       }
     `;
 
+    // Construct the parts payload
+    const contentParts = [{ text: systemPrompt }];
+    
+    if (isVideo && Array.isArray(base64Data)) {
+      // Add all frames to the payload for video context
+      base64Data.forEach(frameData => {
+        contentParts.push({ inlineData: { mimeType: mimeType, data: frameData } });
+      });
+    } else {
+      // Add single image
+      contentParts.push({ inlineData: { mimeType: mimeType, data: base64Data } });
+    }
+
     const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${activeKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{
-          parts: [
-            { text: systemPrompt },
-            { inlineData: { mimeType: mimeType, data: base64Data } }
-          ]
+          parts: contentParts
         }],
         generationConfig: {
           responseMimeType: "application/json"
@@ -426,14 +711,20 @@ const HackyMetaGenApp = () => {
           };
           
           // Update State Incrementally (Show complete ones first)
-          setFiles(prev => prev.map(f => 
-            f.id === file.id ? { 
-              ...f, 
-              status: 'complete', 
-              metadata: jsonResult,
-              keywordAnalysis: analysis
-            } : f
-          ));
+          // IMPORTANT: Check if file still exists in state (wasn't reset)
+          setFiles(prev => {
+            // If the file is not in the current state (because of reset), don't add it back or update it
+            if (!prev.find(f => f.id === file.id)) return prev;
+
+            return prev.map(f => 
+              f.id === file.id ? { 
+                ...f, 
+                status: 'complete', 
+                metadata: jsonResult,
+                keywordAnalysis: analysis
+              } : f
+            );
+          });
 
         } catch (error) {
           console.error(`Error processing ${file.name}:`, error);
@@ -511,47 +802,141 @@ const HackyMetaGenApp = () => {
   const activeFile = files.find(f => f.id === selectedFileId);
   const completeFiles = files.filter(f => f.status === 'complete');
   const allFilesComplete = files.length > 0 && files.every(f => f.status === 'complete');
+  
+  // Calculate Progress for "Adobe Stock" Text Bar
+  const totalFiles = files.length;
+  const progressPercent = totalFiles > 0 ? (completeFiles.length / totalFiles) * 100 : 0;
 
   return (
     <div className={`min-h-screen w-full transition-colors duration-300 pb-20 ${theme === 'dark' ? 'bg-slate-900 text-slate-100' : 'bg-slate-50 text-slate-900'}`}>
       
+      {/* GLOBAL DRAG OVERLAY */}
+      {isGlobalDragging && (
+        <div className="fixed inset-0 z-50 bg-indigo-900/90 backdrop-blur-sm border-4 border-indigo-500 border-dashed m-4 rounded-2xl flex flex-col items-center justify-center animate-in fade-in duration-200">
+          <Upload size={64} className="text-white mb-4 animate-bounce" />
+          <h2 className="text-3xl font-bold text-white mb-2">Drop files anywhere!</h2>
+          <p className="text-indigo-200 text-lg">Support for Images, Videos, and Vectors</p>
+        </div>
+      )}
+
+      {/* TUTORIAL MODAL */}
+      {showTutorial && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className={`max-w-md w-full rounded-2xl shadow-2xl overflow-hidden ${theme === 'dark' ? 'bg-slate-800' : 'bg-white'}`}>
+              <div className="p-6">
+                  <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-xl font-bold">How to get your API Key</h3>
+                    <button onClick={() => setShowTutorial(false)} className="text-slate-400 hover:text-red-500"><X size={20}/></button>
+                  </div>
+                  
+                  <ol className={`list-decimal list-inside space-y-3 mb-6 text-sm ${theme === 'dark' ? 'text-slate-300' : 'text-slate-600'}`}>
+                      <li>Go to <a href="https://aistudio.google.com" target="_blank" rel="noreferrer" className="font-semibold text-indigo-500 hover:underline">Google AI Studio</a>.</li>
+                      <li>Log in with your Google account.</li>
+                      <li>Click the blue <span className="font-semibold">"Get API Key"</span> button.</li>
+                      <li>Create a key in a new project.</li>
+                      <li>Copy the key and paste it into the box above.</li>
+                  </ol>
+                  
+                  <div className="flex gap-3">
+                    <a 
+                        href="https://aistudio.google.com/app/api-keys" 
+                        target="_blank" 
+                        rel="noreferrer"
+                        className="flex-1 py-3 text-center bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-semibold flex items-center justify-center gap-2 transition-colors"
+                    >
+                        Get API Key Now
+                        <Maximize2 size={16} />
+                    </a>
+                    <button 
+                        onClick={() => setShowTutorial(false)}
+                        className={`px-4 py-3 rounded-xl border font-medium transition-colors ${theme === 'dark' ? 'border-slate-600 hover:bg-slate-700' : 'border-slate-300 hover:bg-slate-100'}`}
+                    >
+                        Close
+                    </button>
+                  </div>
+              </div>
+          </div>
+        </div>
+      )}
+
       {/* 1. HEADER */}
       <header className={`px-6 py-4 flex items-center justify-between border-b ${theme === 'dark' ? 'border-slate-800 bg-slate-900/50' : 'border-slate-200 bg-white'}`}>
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center text-white font-bold text-lg shadow-lg shadow-indigo-500/30">H</div>
           <div>
-            <h1 className="font-bold text-lg tracking-tight">Hacky MetaGen <span className="text-xs align-top bg-indigo-500/20 text-indigo-500 px-1.5 py-0.5 rounded ml-1">1.1</span></h1>
+            <h1 className="font-bold text-lg tracking-tight hidden sm:inline">
+              <span className={theme === 'dark' ? 'text-white' : 'text-slate-900'}>Hacky</span>{' '}
+              <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400">MetaGen</span>
+              <span className="text-xs align-top bg-indigo-500/20 text-indigo-500 px-1.5 py-0.5 rounded ml-1">1.5</span>
+            </h1>
           </div>
         </div>
         
         <div className="flex items-center gap-4">
+          
+          {/* Messages */}
+          <div className="relative h-4 hidden md:flex items-center justify-end w-64 overflow-hidden pointer-events-none">
+             {/* Success */}
+             <span className={`absolute right-0 text-xs font-semibold text-green-500 transition-all duration-500 ${showSuccessMessage ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-4'}`}>
+               Key Inserted to The Browser Storage
+             </span>
+             {/* Error */}
+             <span className={`absolute right-0 text-xs font-semibold text-red-500 transition-all duration-500 ${showErrorMessage ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-4'}`}>
+               Please Recheck Your Api Key and Enter
+             </span>
+          </div>
+
           {/* API Key Input & Apply Button */}
           <div className="flex items-center gap-2">
             <input 
-              type="password" 
-              placeholder="Enter Gemini API Key" 
+              type="text" 
+              placeholder={isKeyInvalid ? "Incorrect Key" : (isKeySaved ? "System Ready" : "Enter Gemini API Key")}
               value={userApiKey}
-              onChange={(e) => setUserApiKey(e.target.value)}
-              className={`text-xs px-3 py-2 rounded-lg border transition-all w-32 focus:w-64 ${
-                theme === 'dark' 
-                  ? 'bg-slate-800 border-slate-700 text-white placeholder-slate-500 focus:border-indigo-500' 
-                  : 'bg-slate-100 border-slate-300 text-slate-900 focus:border-indigo-500'
+              onChange={(e) => {
+                setUserApiKey(e.target.value);
+                setIsKeySaved(false); // Reset saved state on edit
+                setIsKeyInvalid(false); // Reset invalid state on edit
+              }}
+              className={`text-xs px-3 py-2 rounded-lg border transition-all w-20 focus:w-48 sm:w-32 sm:focus:w-64 ${
+                isKeyInvalid 
+                  ? 'bg-red-500/10 border-red-500 text-red-500 placeholder-red-500 font-semibold focus:border-red-600'
+                  : isKeySaved
+                    ? 'bg-green-500/10 border-green-500 text-green-500 placeholder-green-500 font-semibold'
+                    : theme === 'dark' 
+                      ? 'bg-slate-800 border-slate-700 text-white placeholder-slate-500 focus:border-indigo-500' 
+                      : 'bg-slate-100 border-slate-300 text-slate-900 focus:border-indigo-500'
               }`}
             />
             <button 
               onClick={handleApplyKey}
+              disabled={isVerifying}
               className={`p-2 rounded-lg border transition-colors ${
-                theme === 'dark' 
-                  ? 'border-slate-700 hover:bg-slate-800 text-slate-400 hover:text-green-400' 
-                  : 'border-slate-300 hover:bg-slate-100 text-slate-600 hover:text-green-600'
+                isKeyInvalid
+                  ? 'bg-red-500 border-red-500 text-white hover:bg-red-600'
+                  : isKeySaved
+                    ? 'bg-green-500 border-green-500 text-white'
+                    : theme === 'dark' 
+                      ? 'border-slate-700 hover:bg-slate-800 text-slate-400 hover:text-green-400' 
+                      : 'border-slate-300 hover:bg-slate-100 text-slate-600 hover:text-green-600'
               }`}
               title="Apply & Save API Key"
             >
-              <Check size={14} />
+              {isVerifying ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+            </button>
+            <button 
+              onClick={() => setShowTutorial(true)}
+              className={`p-2 rounded-lg border transition-colors ${
+                theme === 'dark' 
+                  ? 'border-slate-700 hover:bg-slate-800 text-slate-400 hover:text-indigo-400' 
+                  : 'border-slate-300 hover:bg-slate-100 text-slate-600 hover:text-indigo-600'
+              }`}
+              title="How to get API Key"
+            >
+              <Info size={14} />
             </button>
           </div>
 
-          <div className={`w-px h-6 mx-2 ${theme === 'dark' ? 'bg-slate-800' : 'bg-slate-200'}`}></div>
+          <div className={`w-px h-6 mx-2 hidden sm:block ${theme === 'dark' ? 'bg-slate-800' : 'bg-slate-200'}`}></div>
 
           <button 
             onClick={toggleTheme}
@@ -559,7 +944,7 @@ const HackyMetaGenApp = () => {
           >
             {theme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
           </button>
-          <button className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium bg-slate-800/50 hover:bg-slate-800 rounded-full border border-slate-700 transition-all">
+          <button className="hidden sm:flex items-center gap-2 px-3 py-1.5 text-sm font-medium bg-slate-800/50 hover:bg-slate-800 rounded-full border border-slate-700 transition-all">
             <HelpCircle size={16} className="text-indigo-400" />
             <span>Help</span>
           </button>
@@ -567,7 +952,7 @@ const HackyMetaGenApp = () => {
       </header>
 
       {/* 2. HERO SECTION */}
-      {files.length === 0 && (
+      {files.length === 0 ? (
         <div className="max-w-4xl mx-auto mt-12 px-6 text-center mb-12">
           {/* Animated Feature Badge */}
           <span className={`inline-block px-3 py-1 mb-4 text-xs font-semibold tracking-wider text-indigo-400 uppercase bg-indigo-500/10 rounded-full border border-indigo-500/20 transition-all duration-300 transform ${fadeClass}`}>
@@ -582,13 +967,34 @@ const HackyMetaGenApp = () => {
             Optimized for Adobe Stock SEO.
           </p>
         </div>
+      ) : (
+         /* CONDITIONAL HERO: Shows progress on the Title when files exist */
+         <div className="max-w-7xl mx-auto mt-8 px-4 mb-6">
+            <h2 className="text-3xl font-extrabold tracking-tight">
+              <span 
+                className="bg-clip-text text-transparent transition-all duration-700 ease-out"
+                style={{
+                  // Updated color to #16a34a (Tailwind green-600) to match Auto Generate button
+                  backgroundImage: `linear-gradient(to right, #16a34a ${progressPercent}%, ${theme === 'dark' ? '#ffffff' : '#0f172a'} ${progressPercent}%)`,
+                  WebkitBackgroundClip: 'text',
+                  backgroundClip: 'text'
+                }}
+              >
+                Adobe Stock
+              </span>{' '}
+              <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400">Metadata Generator</span>
+            </h2>
+            <p className={`text-sm mt-1 ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>
+               {completeFiles.length} of {totalFiles} assets processed
+            </p>
+         </div>
       )}
 
       {/* 3. MAIN WORKSPACE */}
-      <main className="max-w-7xl mx-auto px-4 pb-12 flex flex-col lg:flex-row gap-6 h-[calc(100vh-200px)]">
+      <main className="max-w-7xl mx-auto px-4 pb-24 flex flex-col lg:flex-row gap-6 h-auto lg:h-[calc(100vh-200px)]">
         
         {/* LEFT COLUMN: Upload & Batch List */}
-        <div className={`w-full ${viewMode === 'batch' ? 'hidden lg:block lg:w-1/4' : 'lg:w-1/3'} flex flex-col gap-4 transition-all duration-300`}>
+        <div className={`w-full ${viewMode === 'batch' ? 'lg:w-1/4' : 'lg:w-1/3'} flex flex-col gap-4 transition-all duration-300`}>
           
           {/* Content Type Tabs */}
           <div className={`p-1 rounded-xl flex ${theme === 'dark' ? 'bg-slate-800' : 'bg-slate-200'}`}>
@@ -613,7 +1019,7 @@ const HackyMetaGenApp = () => {
           {/* Upload Area */}
           <div 
             onClick={() => fileInputRef.current.click()}
-            className={`flex-1 min-h-[120px] max-h-[160px] border-2 border-dashed rounded-xl flex flex-col items-center justify-center cursor-pointer transition-all group ${
+            className={`flex-1 min-h-[120px] max-h-[160px] border-2 border-dashed rounded-xl flex flex-col items-center justify-center cursor-pointer transition-all group relative overflow-hidden ${
               theme === 'dark' 
                 ? 'border-slate-700 hover:border-indigo-500 hover:bg-slate-800/50' 
                 : 'border-slate-300 hover:border-indigo-500 hover:bg-slate-50'
@@ -628,6 +1034,7 @@ const HackyMetaGenApp = () => {
               ref={fileInputRef}
               onChange={handleFileUpload}
             />
+            
             <Upload size={32} className="mb-3 text-slate-400 group-hover:text-indigo-500 transition-colors" />
             <p className="font-medium text-slate-300 group-hover:text-indigo-400">
               {contentType === 'video' ? 'Drop videos here' : contentType === 'vector' ? 'Drop vectors here' : 'Drop images here'}
@@ -635,8 +1042,36 @@ const HackyMetaGenApp = () => {
             <p className="text-xs text-slate-500">or click to browse</p>
           </div>
 
+          {/* Reset Uploads Button */}
+          {files.length > 0 && (
+            <button
+              onClick={handleResetUploads}
+              className={`w-full py-2 text-xs font-medium rounded-lg border flex items-center justify-center gap-2 transition-colors ${
+                theme === 'dark' 
+                  ? 'border-red-900/50 text-red-400 hover:bg-red-900/20' 
+                  : 'border-red-200 text-red-600 hover:bg-red-50'
+              }`}
+            >
+              <RefreshCw size={14} />
+              Reset to default
+            </button>
+          )}
+
+          {/* Auto Generate Toggle - Always Visible */}
+          <button
+            onClick={() => setIsAutoGenerate(!isAutoGenerate)}
+            className={`w-full py-2.5 px-4 rounded-xl border flex items-center justify-center gap-2 font-medium transition-all ${
+              isAutoGenerate 
+                ? 'bg-green-600 border-green-600 text-white shadow-lg shadow-green-500/20' 
+                : theme === 'dark' ? 'bg-slate-800 border-slate-700 text-slate-400' : 'bg-white border-slate-300 text-slate-500'
+            }`}
+          >
+            {isAutoGenerate ? <Zap size={18}/> : <ZapOff size={18} />}
+            {isAutoGenerate ? 'Auto Generate: ON' : 'Auto Generate: OFF'}
+          </button>
+
           {/* Batch List */}
-          <div className={`flex-1 overflow-y-auto rounded-xl border ${theme === 'dark' ? 'bg-slate-800/30 border-slate-800' : 'bg-white border-slate-200'} p-2 space-y-2`}>
+          <div className={`flex-1 overflow-y-auto rounded-xl border h-48 lg:h-full lg:flex-1 ${theme === 'dark' ? 'bg-slate-800/30 border-slate-800' : 'bg-white border-slate-200'} p-2 space-y-2`}>
             {files.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-slate-500 opacity-60">
                 <p className="text-sm">No files uploaded yet</p>
@@ -739,7 +1174,7 @@ const HackyMetaGenApp = () => {
         </div>
 
         {/* RIGHT COLUMN: View Switcher (Editor OR Batch Review) */}
-        <div className={`w-full ${viewMode === 'batch' ? 'lg:w-3/4' : 'lg:w-2/3'} flex flex-col rounded-xl overflow-hidden transition-all duration-300`}>
+        <div className={`w-full ${viewMode === 'batch' ? 'lg:w-3/4' : 'lg:w-2/3'} flex flex-col rounded-xl transition-all duration-300 h-auto lg:h-full lg:overflow-hidden`}>
           
           {viewMode === 'batch' ? (
             /* --- BATCH REVIEW GRID (Review & Polish) --- */
@@ -749,7 +1184,7 @@ const HackyMetaGenApp = () => {
                 <p className={`text-sm ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>Review metadata per image</p>
               </div>
               
-              <div className="flex-1 overflow-y-auto pr-2 pb-24">
+              <div className="flex-1 lg:overflow-y-auto pr-2 pb-24">
                 {files.length === 0 ? (
                   <div className="flex flex-col items-center justify-center h-64 border-2 border-dashed rounded-xl border-slate-700">
                     <p className="text-slate-500">No completed files to review yet.</p>
@@ -796,7 +1231,7 @@ const HackyMetaGenApp = () => {
                               src={file.preview} 
                               alt="preview" 
                               className={`max-w-full max-h-full object-contain shadow-sm transition-all duration-300 ${
-                                file.status === 'processing' ? 'blur-md opacity-50 scale-105' : ''
+                                file.status === 'processing' ? 'blur-sm opacity-50 scale-95' : ''
                               }`} 
                             />
                             {file.status === 'processing' && (
