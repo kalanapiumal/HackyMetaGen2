@@ -20,7 +20,8 @@ import {
   Maximize2,
   Info,
   Zap,
-  ZapOff
+  ZapOff,
+  Plus
 } from 'lucide-react';
 
 /**
@@ -38,6 +39,10 @@ const HackyMetaGenApp = () => {
   const [viewMode, setViewMode] = useState('batch'); // Changed default to 'batch'
   const [copiedId, setCopiedId] = useState(null); // To track which element triggered copy
   
+  // Editor State
+  const [newKeyword, setNewKeyword] = useState('');
+  const [draggedIndex, setDraggedIndex] = useState(null);
+
   // Auto Generate State
   const [isAutoGenerate, setIsAutoGenerate] = useState(true);
 
@@ -181,6 +186,28 @@ const HackyMetaGenApp = () => {
       // For images, just return the object URL
       return URL.createObjectURL(file);
     }
+  };
+
+  // --- Helper: Calculate Stats ---
+  const calculateKeywordStats = (keywordsString) => {
+    if (!keywordsString) return { short: 0, mid: 0, long: 0, total: 0 };
+    const kwArray = keywordsString.split(',').map(k => k.trim()).filter(k => k);
+    return {
+      short: kwArray.filter(k => k.split(' ').length <= 2).length,
+      mid: kwArray.filter(k => k.split(' ').length === 3).length,
+      long: kwArray.filter(k => k.split(' ').length >= 4).length,
+      total: kwArray.length
+    };
+  };
+
+  // --- Helper: Update File Keywords ---
+  const updateFileKeywords = (fileId, newKeywordsString) => {
+    const stats = calculateKeywordStats(newKeywordsString);
+    setFiles(prev => prev.map(f => f.id === fileId ? {
+        ...f,
+        metadata: { ...f.metadata, keywords: newKeywordsString },
+        keywordAnalysis: stats
+    } : f));
   };
 
   // --- Helper: Run Batch Generation (Logic) ---
@@ -561,25 +588,15 @@ const HackyMetaGenApp = () => {
       }
     `;
 
-    // Construct the parts payload
-    const contentParts = [{ text: systemPrompt }];
-    
-    if (isVideo && Array.isArray(base64Data)) {
-      // Add all frames to the payload for video context
-      base64Data.forEach(frameData => {
-        contentParts.push({ inlineData: { mimeType: mimeType, data: frameData } });
-      });
-    } else {
-      // Add single image
-      contentParts.push({ inlineData: { mimeType: mimeType, data: base64Data } });
-    }
-
     const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${activeKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{
-          parts: contentParts
+          parts: [
+            { text: systemPrompt },
+            { inlineData: { mimeType: mimeType, data: base64Data } }
+          ]
         }],
         generationConfig: {
           responseMimeType: "application/json"
@@ -666,7 +683,6 @@ const HackyMetaGenApp = () => {
     try {
       const jsonResult = await performGeneration(fileObj);
 
-      // Analyze Keywords
       const kwArray = jsonResult.keywords.split(',').map(k => k.trim());
       const analysis = {
         short: kwArray.filter(k => k.split(' ').length <= 2).length,
@@ -722,14 +738,20 @@ const HackyMetaGenApp = () => {
           };
           
           // Update State Incrementally (Show complete ones first)
-          setFiles(prev => prev.map(f => 
-            f.id === file.id ? { 
-              ...f, 
-              status: 'complete', 
-              metadata: jsonResult,
-              keywordAnalysis: analysis
-            } : f
-          ));
+          // IMPORTANT: Check if file still exists in state (wasn't reset)
+          setFiles(prev => {
+            // If the file is not in the current state (because of reset), don't add it back or update it
+            if (!prev.find(f => f.id === file.id)) return prev;
+
+            return prev.map(f => 
+              f.id === file.id ? { 
+                ...f, 
+                status: 'complete', 
+                metadata: jsonResult,
+                keywordAnalysis: analysis
+              } : f
+            );
+          });
 
         } catch (error) {
           console.error(`Error processing ${file.name}:`, error);
@@ -800,6 +822,47 @@ const HackyMetaGenApp = () => {
       setCopiedId(id);
       setTimeout(() => setCopiedId(null), 1500);
     }
+  };
+
+  // --- Keyword Editing Handlers ---
+  const handleAddKeyword = () => {
+    if (!newKeyword.trim() || !activeFile) return;
+    
+    // Get current keyword string, split, add new, join
+    const currentKeywords = activeFile.metadata.keywords ? activeFile.metadata.keywords.split(',').map(k => k.trim()).filter(k => k) : [];
+    const updatedKeywordsString = [...currentKeywords, newKeyword.trim()].join(', ');
+    
+    updateFileKeywords(activeFile.id, updatedKeywordsString);
+    setNewKeyword('');
+  };
+
+  const handleDragStart = (e, index) => {
+    setDraggedIndex(index);
+    // Needed for Firefox to allow dragging
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault(); // Necessary to allow dropping
+    e.dataTransfer.dropEffect = 'move';
+  };
+
+  const handleDropKeyword = (e, targetIndex) => {
+    e.preventDefault();
+    if (draggedIndex === null || draggedIndex === targetIndex || !activeFile) return;
+
+    const currentKeywords = activeFile.metadata.keywords.split(',').map(k => k.trim()).filter(k => k);
+    const itemToMove = currentKeywords[draggedIndex];
+    
+    // Remove from old position
+    currentKeywords.splice(draggedIndex, 1);
+    // Insert at new position
+    currentKeywords.splice(targetIndex, 0, itemToMove);
+    
+    const updatedKeywordsString = currentKeywords.join(', ');
+    updateFileKeywords(activeFile.id, updatedKeywordsString);
+    
+    setDraggedIndex(null);
   };
 
   // --- Render Components ---
@@ -1437,6 +1500,32 @@ const HackyMetaGenApp = () => {
                             <button onClick={() => copyToClipboard(activeFile.metadata.keywords)} className="text-slate-500 hover:text-white"><Copy size={14}/></button>
                           </div>
                         </div>
+
+                        {/* Keyword Input Section */}
+                        <div className="flex gap-2 mb-2">
+                           <input 
+                              type="text" 
+                              value={newKeyword}
+                              onChange={(e) => setNewKeyword(e.target.value)}
+                              onKeyDown={(e) => e.key === 'Enter' && handleAddKeyword()}
+                              placeholder="Add keyword..."
+                              className={`flex-1 text-xs px-3 py-2 rounded-lg border bg-transparent outline-none transition-colors ${
+                                theme === 'dark' 
+                                  ? 'border-slate-700 focus:border-indigo-500 text-white placeholder-slate-500' 
+                                  : 'border-slate-300 focus:border-indigo-500 text-slate-900'
+                              }`}
+                           />
+                           <button 
+                              onClick={handleAddKeyword}
+                              className={`p-2 rounded-lg border transition-colors ${
+                                theme === 'dark' 
+                                  ? 'border-slate-700 hover:bg-slate-700 text-slate-400 hover:text-white' 
+                                  : 'border-slate-300 hover:bg-slate-100 text-slate-500 hover:text-slate-900'
+                              }`}
+                           >
+                             <Plus size={14} />
+                           </button>
+                        </div>
                         
                         <div className={`w-full p-4 rounded-lg border min-h-[150px] ${
                           theme === 'dark' ? 'border-slate-700 bg-slate-900/30' : 'border-slate-300 bg-slate-50'
@@ -1451,12 +1540,22 @@ const HackyMetaGenApp = () => {
                                 else if (words >= 4) colorClass = 'bg-pink-500/10 text-pink-400 border-pink-500/20';
 
                                 return (
-                                  <span key={idx} className={`px-2 py-1 rounded text-xs border ${colorClass} flex items-center gap-1 group cursor-pointer hover:border-opacity-100`}>
+                                  <span 
+                                    key={idx} 
+                                    draggable={true}
+                                    onDragStart={(e) => handleDragStart(e, idx)}
+                                    onDragOver={handleDragOver}
+                                    onDrop={(e) => handleDropKeyword(e, idx)}
+                                    className={`px-2 py-1 rounded text-xs border ${colorClass} flex items-center gap-1 group cursor-grab active:cursor-grabbing hover:border-opacity-100 transition-all ${
+                                        draggedIndex === idx ? 'opacity-50' : 'opacity-100'
+                                    }`}
+                                  >
                                     {kw.trim()}
-                                    <X size={10} className="opacity-0 group-hover:opacity-100" onClick={() => {
-                                      // Simple remove logic for demo
-                                      const newKws = activeFile.metadata.keywords.split(',').filter((_, i) => i !== idx).join(',');
-                                      setFiles(prev => prev.map(f => f.id === activeFile.id ? { ...f, metadata: { ...f.metadata, keywords: newKws } } : f));
+                                    <X size={10} className="opacity-0 group-hover:opacity-100 cursor-pointer" onClick={() => {
+                                      // Remove logic using the centralized update function
+                                      const currentKeywords = activeFile.metadata.keywords.split(',').map(k => k.trim()).filter(k => k);
+                                      const newKws = currentKeywords.filter((_, i) => i !== idx).join(', ');
+                                      updateFileKeywords(activeFile.id, newKws);
                                     }}/>
                                   </span>
                                 );
