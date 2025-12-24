@@ -21,17 +21,43 @@ import {
   Info,
   Zap,
   ZapOff,
-  Plus
+  Plus,
+  Brain 
 } from 'lucide-react';
 
 /**
- * Hacky MetaGen 1.5 - Adobe Stock Metadata Generator
+ * Hacky MetaGen 3.5 - Adobe Stock Metadata Generator
  * Built with React + Tailwind CSS + Gemini API
  */
 
+const ADOBE_CATEGORIES = [
+  { id: 1, name: "Animals" },
+  { id: 2, name: "Buildings and Architecture" },
+  { id: 3, name: "Business" },
+  { id: 4, name: "Drinks" },
+  { id: 5, name: "The Environment" },
+  { id: 6, name: "States of Mind" },
+  { id: 7, name: "Food" },
+  { id: 8, name: "Graphic Resources" },
+  { id: 9, name: "Hobbies and Leisure" },
+  { id: 10, name: "Industry" },
+  { id: 11, name: "Landscape" },
+  { id: 12, name: "Lifestyle" },
+  { id: 13, name: "People" },
+  { id: 14, name: "Plants and Flowers" },
+  { id: 15, name: "Culture and Religion" },
+  { id: 16, name: "Science" },
+  { id: 17, name: "Social Issues" },
+  { id: 18, name: "Sports" },
+  { id: 19, name: "Technology" },
+  { id: 20, name: "Transport" },
+  { id: 21, name: "Travel" },
+];
+
 const HackyMetaGenApp = () => {
   // --- State Management ---
-  const [theme, setTheme] = useState('dark');
+  // Initialize from localStorage if available, otherwise default
+  const [theme, setTheme] = useState(() => localStorage.getItem('hackymetagen_theme') || 'dark');
   const [files, setFiles] = useState([]);
   const [selectedFileId, setSelectedFileId] = useState(null);
   const [contentType, setContentType] = useState('image'); // image, video, vector
@@ -44,13 +70,29 @@ const HackyMetaGenApp = () => {
   const [draggedIndex, setDraggedIndex] = useState(null);
 
   // Auto Generate State
-  const [isAutoGenerate, setIsAutoGenerate] = useState(true);
+  const [isAutoGenerate, setIsAutoGenerate] = useState(() => {
+    const saved = localStorage.getItem('hackymetagen_auto_generate');
+    return saved !== null ? JSON.parse(saved) : true;
+  });
+  
+  // Category Mode State
+  const [useAiCategory, setUseAiCategory] = useState(() => {
+    const saved = localStorage.getItem('hackymetagen_use_ai_category');
+    return saved !== null ? JSON.parse(saved) : false;
+  });
+
+  // CSV Extension State
+  const [csvExtension, setCsvExtension] = useState(() => localStorage.getItem('hackymetagen_csv_extension') || 'ai');
+  const [preserveExtension, setPreserveExtension] = useState(() => {
+    const saved = localStorage.getItem('hackymetagen_preserve_extension');
+    return saved !== null ? JSON.parse(saved) : false;
+  });
 
   // Drag and Drop Global State
   const [isGlobalDragging, setIsGlobalDragging] = useState(false);
   const dragCounter = useRef(0);
 
-  // Session Management for cancelling pending operations on reset
+  // Session Management
   const sessionId = useRef(0);
   
   // Animation State for Feature Badge
@@ -61,6 +103,41 @@ const HackyMetaGenApp = () => {
     "Batch Processing Support",
     "CSV FileName Extension Selection Support"
   ];
+  
+  // API Key Handling
+  const [userApiKey, setUserApiKey] = useState(''); 
+  const [isKeySaved, setIsKeySaved] = useState(false); 
+  const [isKeyInvalid, setIsKeyInvalid] = useState(false); 
+  const [showSuccessMessage, setShowSuccessMessage] = useState(false); 
+  const [showErrorMessage, setShowErrorMessage] = useState(false); 
+  const [showTutorial, setShowTutorial] = useState(false); 
+  const [isVerifying, setIsVerifying] = useState(false); 
+  const envApiKey = ""; // The execution environment provides the key at runtime
+  
+  const fileInputRef = useRef(null);
+
+  // --- Effects ---
+
+  // Persistence Effects for Buttons
+  useEffect(() => {
+    localStorage.setItem('hackymetagen_theme', theme);
+  }, [theme]);
+
+  useEffect(() => {
+    localStorage.setItem('hackymetagen_auto_generate', JSON.stringify(isAutoGenerate));
+  }, [isAutoGenerate]);
+
+  useEffect(() => {
+    localStorage.setItem('hackymetagen_use_ai_category', JSON.stringify(useAiCategory));
+  }, [useAiCategory]);
+
+  useEffect(() => {
+    localStorage.setItem('hackymetagen_csv_extension', csvExtension);
+  }, [csvExtension]);
+
+  useEffect(() => {
+    localStorage.setItem('hackymetagen_preserve_extension', JSON.stringify(preserveExtension));
+  }, [preserveExtension]);
 
   // Feature Badge Animation Loop
   useEffect(() => {
@@ -70,30 +147,23 @@ const HackyMetaGenApp = () => {
         setFeatureIndex((prev) => (prev + 1) % features.length);
         setFadeClass('opacity-100 translate-y-0');
       }, 300);
-    }, 5000); // Animation speed
+    }, 5000); 
     return () => clearInterval(interval);
   }, []);
-  
-  // API Key Handling
-  const [userApiKey, setUserApiKey] = useState(''); 
-  const [isKeySaved, setIsKeySaved] = useState(false); // Track if key is saved for UI state
-  const [isKeyInvalid, setIsKeyInvalid] = useState(false); // Track if verification failed
-  const [showSuccessMessage, setShowSuccessMessage] = useState(false); // Track success message visibility
-  const [showErrorMessage, setShowErrorMessage] = useState(false); // Track error message visibility
-  const [showTutorial, setShowTutorial] = useState(false); // Track tutorial modal visibility
-  const [isVerifying, setIsVerifying] = useState(false); // Loading state for key check
-  const envApiKey = ""; // The execution environment provides the key at runtime
-  
-  const fileInputRef = useRef(null);
 
   // Load API Key from local storage on mount
   useEffect(() => {
     const savedKey = localStorage.getItem('hackymetagen_api_key');
     if (savedKey) {
       setIsKeySaved(true);
-      // We don't populate userApiKey here to keep the input clear for the placeholder message
     }
   }, []);
+
+  // --- Helper Functions (Defined before usage) ---
+
+  const toggleTheme = () => {
+    setTheme(prev => prev === 'light' ? 'dark' : 'light');
+  };
 
   const handleApplyKey = async () => {
     const keyToTest = userApiKey.trim();
@@ -102,15 +172,13 @@ const HackyMetaGenApp = () => {
     setIsVerifying(true);
 
     try {
-      // Validate Key by making a lightweight call to the Models list endpoint
       const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${keyToTest}&pageSize=1`);
       
       if (response.ok) {
-        // --- Success Path ---
         localStorage.setItem('hackymetagen_api_key', keyToTest);
         setIsKeySaved(true);
         setIsKeyInvalid(false);
-        setUserApiKey(''); // Clear input to show success placeholder
+        setUserApiKey(''); 
         
         setShowSuccessMessage(true);
         setShowErrorMessage(false);
@@ -122,35 +190,36 @@ const HackyMetaGenApp = () => {
         throw new Error("Invalid API Key");
       }
     } catch (error) {
-      // --- Error Path ---
-      // Log removed to prevent console noise
       setIsKeyInvalid(true);
       setIsKeySaved(false);
-      setUserApiKey(''); // Clear input to show error placeholder
+      setUserApiKey(''); 
       
       setShowErrorMessage(true);
       setShowSuccessMessage(false);
       
       setTimeout(() => {
         setShowErrorMessage(false);
-        // We keep isKeyInvalid true until user types again for the visual red effect
       }, 5000);
     } finally {
       setIsVerifying(false);
     }
   };
 
-  // --- Configuration & Constants ---
-  const MAX_TITLE_LENGTH = 125;
-  const MIN_TITLE_LENGTH = 100; // Soft limit for validation
-  const TARGET_KEYWORD_COUNT = 49;
+  const toggleCategoryMode = () => {
+    const newMode = !useAiCategory;
+    setUseAiCategory(newMode);
 
-  // --- Helper: Toggle Theme ---
-  const toggleTheme = () => {
-    setTheme(prev => prev === 'light' ? 'dark' : 'light');
+    setFiles(prev => prev.map(f => {
+      let newCategoryId = 8; // Default
+      if (newMode) {
+        newCategoryId = f.aiCategoryId || 8; 
+      } else {
+        newCategoryId = 8;
+      }
+      return { ...f, categoryId: newCategoryId };
+    }));
   };
 
-  // --- Helper: Generate Thumbnail ---
   const generateThumbnail = async (file) => {
     if (file.type.startsWith('video/')) {
       return new Promise((resolve) => {
@@ -159,10 +228,9 @@ const HackyMetaGenApp = () => {
         video.src = URL.createObjectURL(file);
         video.muted = true;
         video.playsInline = true;
-        video.currentTime = 1; // Seek to 1 second to grab a frame
+        video.currentTime = 1;
 
         video.onloadeddata = () => {
-          // If video is shorter than 1s, seek to 0
           if (video.duration < 1) video.currentTime = 0;
         };
 
@@ -179,16 +247,14 @@ const HackyMetaGenApp = () => {
 
         video.onerror = () => {
           URL.revokeObjectURL(video.src);
-          resolve(null); // Fallback if fails
+          resolve(null);
         };
       });
     } else {
-      // For images, just return the object URL
       return URL.createObjectURL(file);
     }
   };
 
-  // --- Helper: Calculate Stats ---
   const calculateKeywordStats = (keywordsString) => {
     if (!keywordsString) return { short: 0, mid: 0, long: 0, total: 0 };
     const kwArray = keywordsString.split(',').map(k => k.trim()).filter(k => k);
@@ -200,7 +266,6 @@ const HackyMetaGenApp = () => {
     };
   };
 
-  // --- Helper: Update File Keywords ---
   const updateFileKeywords = (fileId, newKeywordsString) => {
     const stats = calculateKeywordStats(newKeywordsString);
     setFiles(prev => prev.map(f => f.id === fileId ? {
@@ -209,224 +274,46 @@ const HackyMetaGenApp = () => {
         keywordAnalysis: stats
     } : f));
   };
-
-  // --- Helper: Run Batch Generation (Logic) ---
-  const runBatchGeneration = async (filesToProcess) => {
-     // This function processes a specific list of files
-     // It assumes the UI state 'isProcessing' is managed by the caller if needed
-     
-     await Promise.all(filesToProcess.map(async (file) => {
-        try {
-          const jsonResult = await performGeneration(file);
-          const kwArray = jsonResult.keywords.split(',').map(k => k.trim());
-          const analysis = {
-            short: kwArray.filter(k => k.split(' ').length <= 2).length,
-            mid: kwArray.filter(k => k.split(' ').length === 3).length,
-            long: kwArray.filter(k => k.split(' ').length >= 4).length,
-            total: kwArray.length
-          };
-          
-          // Update State Incrementally (Show complete ones first)
-          // IMPORTANT: Check if file still exists in state (wasn't reset)
-          setFiles(prev => {
-            // If the file is not in the current state (because of reset), don't add it back or update it
-            if (!prev.find(f => f.id === file.id)) return prev;
-
-            return prev.map(f => 
-              f.id === file.id ? { 
-                ...f, 
-                status: 'complete', 
-                metadata: jsonResult,
-                keywordAnalysis: analysis
-              } : f
-            );
-          });
-
-        } catch (error) {
-          console.error(`Error processing ${file.name}:`, error);
-          setFiles(prev => prev.map(f => f.id === file.id ? { ...f, status: 'error' } : f));
-        }
-      }));
+  
+  const updateFileCategory = (fileId, newCategoryId) => {
+    setFiles(prev => prev.map(f => f.id === fileId ? {
+        ...f,
+        categoryId: parseInt(newCategoryId, 10)
+    } : f));
   };
 
-  // --- Helper: Process Files (Upload Handler) ---
-  const processUploadedFiles = useCallback(async (uploadedFiles) => {
-    // Check for API Key first
-    const activeKey = userApiKey || localStorage.getItem('hackymetagen_api_key') || envApiKey;
-    if (!activeKey) {
-      setShowTutorial(true);
-      // Reset file input so change event fires if they try again with same file
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
-      }
-      return;
-    }
-
-    // Capture the current session ID when upload starts
-    const currentSession = sessionId.current;
-
-    // Create initial file objects
-    const newFilesPromises = uploadedFiles.map(async (file) => {
-      let fileName = file.name;
-      const isMov = fileName.toLowerCase().endsWith('.mov');
-
-      if (contentType === 'image' && !isMov) {
-        fileName = fileName.replace(/\.[^/.]+$/, "") + ".ai";
-      }
-
-      const previewUrl = await generateThumbnail(file);
-
-      // Determine initial status based on Auto Generate setting
-      const initialStatus = isAutoGenerate ? 'processing' : 'pending';
-
-      return {
-        id: crypto.randomUUID(),
-        file,
-        name: fileName,
-        preview: previewUrl,
-        type: contentType,
-        status: initialStatus, 
-        metadata: {
-          title: '',
-          keywords: ''
-        },
-        keywordAnalysis: { short: 0, mid: 0, long: 0, total: 0 }
-      };
-    });
-
-    const newFiles = await Promise.all(newFilesPromises);
-
-    // CRITICAL: Check if reset happened while waiting for thumbnails
-    if (currentSession !== sessionId.current) {
-        return; // Stop processing, user reset the app
-    }
-
-    setFiles(prev => {
-        const updated = [...prev, ...newFiles];
-        if (!selectedFileId && updated.length > 0) {
-           // setSelectedFileId(updated[0].id); // Can't set state derived from prev here safely without another ref
-        }
-        return updated;
-    });
+  const handleGlobalExtensionChange = (newExt) => {
+    setCsvExtension(newExt);
+    setPreserveExtension(false);
     
-    // Select first file if none selected
-    if (files.length === 0 && newFiles.length > 0) {
-        setSelectedFileId(newFiles[0].id);
-    }
-
-    // AUTO GENERATE LOGIC
-    if (isAutoGenerate) {
-        // Trigger generation for these specific new files immediately
-        // We don't block the UI, just run it
-        runBatchGeneration(newFiles);
-    }
-
-  }, [contentType, files.length, selectedFileId, isAutoGenerate, userApiKey]);
-
-  // --- Global Drag and Drop Handlers ---
-  useEffect(() => {
-    const handleDragEnter = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      dragCounter.current += 1;
-      if (e.dataTransfer.items && e.dataTransfer.items.length > 0) {
-        setIsGlobalDragging(true);
-      }
-    };
-
-    const handleDragLeave = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      dragCounter.current -= 1;
-      if (dragCounter.current === 0) {
-        setIsGlobalDragging(false);
-      }
-    };
-
-    const handleDragOver = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-    };
-
-    const handleDrop = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      setIsGlobalDragging(false);
-      dragCounter.current = 0;
-      if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-        processUploadedFiles(Array.from(e.dataTransfer.files));
-      }
-    };
-
-    window.addEventListener('dragenter', handleDragEnter);
-    window.addEventListener('dragleave', handleDragLeave);
-    window.addEventListener('dragover', handleDragOver);
-    window.addEventListener('drop', handleDrop);
-
-    return () => {
-      window.removeEventListener('dragenter', handleDragEnter);
-      window.removeEventListener('dragleave', handleDragLeave);
-      window.removeEventListener('dragover', handleDragOver);
-      window.removeEventListener('drop', handleDrop);
-    };
-  }, [processUploadedFiles]);
-
-  // --- Helper: Handle File Input Change ---
-  const handleFileUpload = (e) => {
-    if (e.target.files && e.target.files.length > 0) {
-      processUploadedFiles(Array.from(e.target.files));
-    }
-  };
-
-  // --- Helper: Remove File ---
-  const removeFile = (id, e) => {
-    e.stopPropagation();
-    setFiles(prev => prev.filter(f => f.id !== id));
-    if (selectedFileId === id) {
-      setSelectedFileId(null);
-    }
-  };
-
-  // --- Helper: Reset Uploads ---
-  const handleResetUploads = () => {
-    if (files.length === 0) return;
-    
-    // Increment session ID to invalidate any pending upload processing
-    sessionId.current += 1;
-
-    // 1. Cleanup: Revoke object URLs to free up browser memory
-    files.forEach(file => {
-        if (file.preview && file.preview.startsWith('blob:')) {
-            URL.revokeObjectURL(file.preview);
-        }
-    });
-
-    // 2. Clear State
-    setFiles([]);
-    setSelectedFileId(null);
-    
-    // 3. Reset View and Processing States
-    setViewMode('batch');
-    setIsProcessing(false);
-    setIsGlobalDragging(false);
-    
-    // 4. Reset File Input Value
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
-  };
-
-  // --- Helper: Update File Extension ---
-  const updateFileExtension = (id, newExt) => {
     setFiles(prev => prev.map(f => {
-      if (f.id !== id) return f;
-      // Regex to replace the extension at the end of the string
-      const newName = f.name.replace(/\.[^/.]+$/, "") + "." + newExt;
-      return { ...f, name: newName };
+      if (f.type !== 'video') {
+         const originalName = f.file.name;
+         const newName = originalName.replace(/\.[^/.]+$/, "") + "." + newExt;
+         return { ...f, name: newName };
+      }
+      return f;
     }));
   };
 
-  // --- Helper: Extract Video Frames (Multiple) ---
+  const handlePreserveExtension = () => {
+    const nextState = !preserveExtension;
+    setPreserveExtension(nextState);
+
+    if (nextState) {
+        setFiles(prev => prev.map(f => ({ ...f, name: f.file.name })));
+    } else {
+        setFiles(prev => prev.map(f => {
+            if (f.type !== 'video') {
+                const originalName = f.file.name;
+                const newName = originalName.replace(/\.[^/.]+$/, "") + "." + csvExtension;
+                return { ...f, name: newName };
+            }
+            return f;
+        }));
+    }
+  };
+
   const extractVideoFrames = (file, frameCount = 5) => {
     return new Promise((resolve, reject) => {
       const video = document.createElement('video');
@@ -493,36 +380,24 @@ const HackyMetaGenApp = () => {
     });
   };
 
-  // --- Core: API Call Logic ---
   const performGeneration = async (fileObj) => {
-    // 1. Setup API Key
     const activeKey = userApiKey || localStorage.getItem('hackymetagen_api_key') || envApiKey;
     
-    // Note: Removed client-side validation for empty API key to allow environment variables/proxies to function.
-
-    // 2. Determine File Type & Process Content
     let mimeType = '';
-    let base64Data = null; // Can be string or array of strings
+    let base64Data = null;
     const ext = fileObj.file.name.split('.').pop().toLowerCase();
     
-    // Check if it's a video based on mime type or extension
     const isVideo = fileObj.file.type.startsWith('video/') || ['mov', 'mp4', 'avi', 'webm', 'mkv'].includes(ext);
 
     if (isVideo) {
-        // Video Path: Extract Multiple Frames
         try {
-            // Extract 5 frames to understand the whole video context
-            const frames = await extractVideoFrames(fileObj.file, 5);
-            base64Data = frames; // Array of strings
-            mimeType = 'image/jpeg'; // Frames are converted to JPEGs
+            base64Data = await extractVideoFrames(fileObj.file, 5);
+            mimeType = 'image/jpeg'; 
         } catch (err) {
             console.error("Video processing failed:", err);
             throw new Error(`Video processing error: ${err.message}`);
         }
     } else {
-        // Image/Vector Path: Direct Upload
-        
-        // 2a. Validation: File Size (Only for non-video files where we upload the whole file)
         if (fileObj.file.size > 20 * 1024 * 1024) {
             throw new Error("File too large. Images/Vectors must be under 20MB.");
         }
@@ -542,20 +417,19 @@ const HackyMetaGenApp = () => {
           reader.readAsDataURL(fileObj.file);
         });
 
-        // Detect Mime Type
         mimeType = fileObj.file.type;
         if (!mimeType || mimeType === '') {
             if (ext === 'jpg' || ext === 'jpeg') mimeType = 'image/jpeg';
             else if (ext === 'png') mimeType = 'image/png';
             else if (ext === 'webp') mimeType = 'image/webp';
             else if (ext === 'ai' || ext === 'eps') {
-                // Warning: Browsers can't inherently parse AI/EPS. 
-                // We'll try generic binary, but this might fail if model expects visual.
-                // Best practice is uploading PNG previews for vectors.
-                mimeType = 'image/png'; // Fallback hope
+                mimeType = 'image/png'; 
             }
         }
     }
+
+    // Build the category list string for the prompt
+    const categoriesString = ADOBE_CATEGORIES.map(c => `${c.id}. ${c.name}`).join('\n');
 
     const systemPrompt = `
       You are Hacky MetaGen 1.0, a senior SEO expert for Adobe Stock.
@@ -580,23 +454,34 @@ const HackyMetaGenApp = () => {
          **CONTENT RULES:**
          - NO brand names, trademarks, or personal names.
          - Describe the subject, style, mood, lighting, and concept.
+
+      3. **Category**: Choose the single most appropriate category ID (1-21) from the list below:
+      ${categoriesString}
       
       OUTPUT FORMAT (JSON ONLY):
       {
         "title": "string",
-        "keywords": "string (comma separated)"
+        "keywords": "string (comma separated)",
+        "category_id": integer
       }
     `;
+
+    const contentParts = [{ text: systemPrompt }];
+    
+    if (isVideo && Array.isArray(base64Data)) {
+      base64Data.forEach(frameData => {
+        contentParts.push({ inlineData: { mimeType: mimeType, data: frameData } });
+      });
+    } else {
+      contentParts.push({ inlineData: { mimeType: mimeType, data: base64Data } });
+    }
 
     const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${activeKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{
-          parts: [
-            { text: systemPrompt },
-            { inlineData: { mimeType: mimeType, data: base64Data } }
-          ]
+          parts: contentParts
         }],
         generationConfig: {
           responseMimeType: "application/json"
@@ -604,7 +489,6 @@ const HackyMetaGenApp = () => {
       })
     });
 
-    // Robust API error check
     if (!response.ok) {
         let errorMsg = `API Error: ${response.status} ${response.statusText}`;
         try {
@@ -612,13 +496,10 @@ const HackyMetaGenApp = () => {
             if (errorData.error && errorData.error.message) {
                 errorMsg = `API Error: ${errorData.error.message}`;
             }
-        } catch (e) {
-            // Ignore json parse error on error response
-        }
+        } catch (e) {}
         throw new Error(errorMsg);
     }
 
-    // Safely parse JSON
     let data;
     try {
         data = await response.json();
@@ -628,19 +509,16 @@ const HackyMetaGenApp = () => {
 
     if (data.error) throw new Error(data.error.message);
     
-    // Safety check for candidates
     if (!data.candidates || !data.candidates[0]) {
        throw new Error("No candidates returned from AI");
     }
 
     const candidate = data.candidates[0];
     
-    // Check for safety blocks
     if (candidate.finishReason === "SAFETY") {
         throw new Error("Generation blocked by safety settings");
     }
 
-    // Check content parts
     if (!candidate.content || !candidate.content.parts || !candidate.content.parts[0]) {
        throw new Error("No content generated");
     }
@@ -651,14 +529,12 @@ const HackyMetaGenApp = () => {
         throw new Error("Empty AI response text");
     }
 
-    // Robust JSON parsing: Find the first '{' and last '}' to extract valid JSON
     const firstBrace = resultText.indexOf('{');
     const lastBrace = resultText.lastIndexOf('}');
 
     if (firstBrace !== -1 && lastBrace !== -1) {
       resultText = resultText.substring(firstBrace, lastBrace + 1);
     } else {
-      // Fallback cleanup
       resultText = resultText.replace(/```json/g, '').replace(/```/g, '').trim();
     }
     
@@ -674,7 +550,165 @@ const HackyMetaGenApp = () => {
     }
   };
 
-  // --- Core: UI Triggered Generation ---
+  const runBatchGeneration = async (filesToProcess) => {
+     for (const file of filesToProcess) {
+        try {
+          const jsonResult = await performGeneration(file);
+          const kwArray = jsonResult.keywords.split(',').map(k => k.trim());
+          const analysis = {
+            short: kwArray.filter(k => k.split(' ').length <= 2).length,
+            mid: kwArray.filter(k => k.split(' ').length === 3).length,
+            long: kwArray.filter(k => k.split(' ').length >= 4).length,
+            total: kwArray.length
+          };
+          
+          setFiles(prev => {
+            if (!prev.find(f => f.id === file.id)) return prev;
+
+            return prev.map(f => {
+              if (f.id !== file.id) return f;
+              
+              const predictedCategory = jsonResult.category_id || 8;
+              const finalCategory = useAiCategory ? predictedCategory : 8;
+
+              return { 
+                ...f, 
+                status: 'complete', 
+                metadata: jsonResult,
+                keywordAnalysis: analysis,
+                aiCategoryId: predictedCategory, 
+                categoryId: finalCategory
+              };
+            });
+          });
+          
+          await new Promise(resolve => setTimeout(resolve, 4000));
+
+        } catch (error) {
+          console.error(`Error processing ${file.name}:`, error);
+          
+          if (error.message.includes('429') || error.message.includes('Quota')) {
+              await new Promise(resolve => setTimeout(resolve, 10000));
+          }
+
+          setFiles(prev => {
+             if (!prev.find(f => f.id === file.id)) return prev;
+             return prev.map(f => f.id === file.id ? { ...f, status: 'error' } : f);
+          });
+        }
+     }
+  };
+
+  const processUploadedFiles = useCallback(async (uploadedFiles) => {
+    const activeKey = userApiKey || localStorage.getItem('hackymetagen_api_key') || envApiKey;
+    if (!activeKey) {
+      setShowTutorial(true);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+      return;
+    }
+
+    const currentSession = sessionId.current;
+
+    const newFilesPromises = uploadedFiles.map(async (file) => {
+      let fileName = file.name;
+      const isMov = fileName.toLowerCase().endsWith('.mov');
+
+      if (contentType === 'image' && !isMov) {
+        if (!preserveExtension) {
+            fileName = fileName.replace(/\.[^/.]+$/, "") + "." + csvExtension;
+        } else {
+            fileName = file.name;
+        }
+      }
+
+      const previewUrl = await generateThumbnail(file);
+      const initialStatus = isAutoGenerate ? 'processing' : 'pending';
+
+      return {
+        id: crypto.randomUUID(),
+        file,
+        name: fileName,
+        preview: previewUrl,
+        type: contentType,
+        status: initialStatus,
+        categoryId: 8, 
+        aiCategoryId: null, 
+        metadata: {
+          title: '',
+          keywords: ''
+        },
+        keywordAnalysis: { short: 0, mid: 0, long: 0, total: 0 }
+      };
+    });
+
+    const newFiles = await Promise.all(newFilesPromises);
+
+    if (currentSession !== sessionId.current) {
+        return; 
+    }
+
+    setFiles(prev => {
+        const updated = [...prev, ...newFiles];
+        return updated;
+    });
+    
+    if (files.length === 0 && newFiles.length > 0) {
+        setSelectedFileId(newFiles[0].id);
+    }
+
+    if (isAutoGenerate) {
+        runBatchGeneration(newFiles);
+    }
+
+  }, [contentType, files.length, selectedFileId, isAutoGenerate, useAiCategory, preserveExtension, csvExtension, userApiKey]);
+
+  // --- Handlers ---
+  const handleFileUpload = (e) => {
+    if (e.target.files && e.target.files.length > 0) {
+      processUploadedFiles(Array.from(e.target.files));
+    }
+  };
+
+  const removeFile = (id, e) => {
+    e.stopPropagation();
+    setFiles(prev => prev.filter(f => f.id !== id));
+    if (selectedFileId === id) {
+      setSelectedFileId(null);
+    }
+  };
+
+  const handleResetUploads = () => {
+    if (files.length === 0) return;
+    
+    sessionId.current += 1;
+
+    files.forEach(file => {
+        if (file.preview && file.preview.startsWith('blob:')) {
+            URL.revokeObjectURL(file.preview);
+        }
+    });
+
+    setFiles([]);
+    setSelectedFileId(null);
+    setViewMode('batch');
+    setIsProcessing(false);
+    setIsGlobalDragging(false);
+    
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const updateFileExtension = (id, newExt) => {
+    setFiles(prev => prev.map(f => {
+      if (f.id !== id) return f;
+      const newName = f.name.replace(/\.[^/.]+$/, "") + "." + newExt;
+      return { ...f, name: newName };
+    }));
+  };
+
   const generateMetadata = async (fileObj) => {
     if (!fileObj) return;
 
@@ -696,69 +730,32 @@ const HackyMetaGenApp = () => {
           ...f, 
           status: 'complete', 
           metadata: jsonResult,
-          keywordAnalysis: analysis
+          keywordAnalysis: analysis,
+          aiCategoryId: jsonResult.category_id,
+          categoryId: useAiCategory ? (jsonResult.category_id || 8) : 8
         } : f
       ));
 
     } catch (error) {
       console.error("Generation Error:", error);
-      // Removed generic alert to allow per-item error status
-      // You can add a toast notification system here if desired
       setFiles(prev => prev.map(f => f.id === fileObj.id ? { ...f, status: 'error' } : f));
     }
   };
 
-  // --- Core: Batch Generation & Auto Export ---
   const handleGenerateAll = async () => {
     setIsProcessing(true);
     
-    // 1. Identify files to process
     const pendingFiles = files.filter(f => f.status !== 'complete');
     
-    // If no files to process, just return (removed auto-export)
     if (pendingFiles.length === 0) {
       setIsProcessing(false);
       return;
     }
 
-    // Update status to processing visually
     setFiles(prev => prev.map(f => f.status !== 'complete' ? { ...f, status: 'processing' } : f));
 
     try {
-      // 2. Process all pending files in parallel with incremental updates
-      await Promise.all(pendingFiles.map(async (file) => {
-        try {
-          const jsonResult = await performGeneration(file);
-          const kwArray = jsonResult.keywords.split(',').map(k => k.trim());
-          const analysis = {
-            short: kwArray.filter(k => k.split(' ').length <= 2).length,
-            mid: kwArray.filter(k => k.split(' ').length === 3).length,
-            long: kwArray.filter(k => k.split(' ').length >= 4).length,
-            total: kwArray.length
-          };
-          
-          // Update State Incrementally (Show complete ones first)
-          // IMPORTANT: Check if file still exists in state (wasn't reset)
-          setFiles(prev => {
-            // If the file is not in the current state (because of reset), don't add it back or update it
-            if (!prev.find(f => f.id === file.id)) return prev;
-
-            return prev.map(f => 
-              f.id === file.id ? { 
-                ...f, 
-                status: 'complete', 
-                metadata: jsonResult,
-                keywordAnalysis: analysis
-              } : f
-            );
-          });
-
-        } catch (error) {
-          console.error(`Error processing ${file.name}:`, error);
-          setFiles(prev => prev.map(f => f.id === file.id ? { ...f, status: 'error' } : f));
-        }
-      }));
-
+      await runBatchGeneration(pendingFiles);
     } catch (err) {
       console.error("Batch processing error", err);
     } finally {
@@ -766,20 +763,16 @@ const HackyMetaGenApp = () => {
     }
   };
 
-  // --- Export Logic ---
   const handleExportCSV = (filesToExport = files) => {
-    // Format: Filename,Title,Keywords,Category
     const csvHeader = "Filename,Title,Keywords,Category\n";
     
     const csvRows = filesToExport.map(f => {
-      // We allow exporting even if error, but fields will be empty
       if (f.status === 'pending' || f.status === 'processing') return null;
 
-      // Escape quotes for CSV
       const title = `"${f.metadata.title ? f.metadata.title.replace(/"/g, '""') : ''}"`;
       const keywords = `"${f.metadata.keywords ? f.metadata.keywords.replace(/"/g, '""') : ''}"`;
-      const filename = f.name; // Updated to use the modified name (.ai or .mov)
-      const category = 8; // Hardcoded
+      const filename = f.name; 
+      const category = f.categoryId || 8; 
       
       return `${filename},${title},${keywords},${category}`;
     }).filter(row => row !== null).join("\n");
@@ -793,57 +786,44 @@ const HackyMetaGenApp = () => {
   };
 
   const copyToClipboard = (text, id = null) => {
-    // Create a temporary textarea element
     const textArea = document.createElement("textarea");
     textArea.value = text;
-    
-    // Ensure it's not visible but part of the DOM
     textArea.style.position = "fixed";
     textArea.style.left = "-9999px";
     textArea.style.top = "0";
     document.body.appendChild(textArea);
-    
-    // Select the text
     textArea.focus();
     textArea.select();
     
     try {
-      // Execute the copy command
       document.execCommand('copy');
     } catch (err) {
       console.error('Failed to copy text: ', err);
     }
     
-    // Remove the textarea
     document.body.removeChild(textArea);
 
-    // Trigger visual feedback
     if (id) {
       setCopiedId(id);
       setTimeout(() => setCopiedId(null), 1500);
     }
   };
 
-  // --- Keyword Editing Handlers ---
   const handleAddKeyword = () => {
     if (!newKeyword.trim() || !activeFile) return;
-    
-    // Get current keyword string, split, add new, join
     const currentKeywords = activeFile.metadata.keywords ? activeFile.metadata.keywords.split(',').map(k => k.trim()).filter(k => k) : [];
     const updatedKeywordsString = [...currentKeywords, newKeyword.trim()].join(', ');
-    
     updateFileKeywords(activeFile.id, updatedKeywordsString);
     setNewKeyword('');
   };
 
   const handleDragStart = (e, index) => {
     setDraggedIndex(index);
-    // Needed for Firefox to allow dragging
     e.dataTransfer.effectAllowed = 'move';
   };
 
   const handleDragOver = (e) => {
-    e.preventDefault(); // Necessary to allow dropping
+    e.preventDefault(); 
     e.dataTransfer.dropEffect = 'move';
   };
 
@@ -853,15 +833,11 @@ const HackyMetaGenApp = () => {
 
     const currentKeywords = activeFile.metadata.keywords.split(',').map(k => k.trim()).filter(k => k);
     const itemToMove = currentKeywords[draggedIndex];
-    
-    // Remove from old position
     currentKeywords.splice(draggedIndex, 1);
-    // Insert at new position
     currentKeywords.splice(targetIndex, 0, itemToMove);
     
     const updatedKeywordsString = currentKeywords.join(', ');
     updateFileKeywords(activeFile.id, updatedKeywordsString);
-    
     setDraggedIndex(null);
   };
 
@@ -871,7 +847,6 @@ const HackyMetaGenApp = () => {
   const completeFiles = files.filter(f => f.status === 'complete');
   const allFilesComplete = files.length > 0 && files.every(f => f.status === 'complete');
   
-  // Calculate Progress for "Adobe Stock" Text Bar
   const totalFiles = files.length;
   const progressPercent = totalFiles > 0 ? (completeFiles.length / totalFiles) * 100 : 0;
 
@@ -935,7 +910,7 @@ const HackyMetaGenApp = () => {
             <h1 className="font-bold text-lg tracking-tight hidden sm:inline">
               <span className={theme === 'dark' ? 'text-white' : 'text-slate-900'}>Hacky</span>{' '}
               <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400">MetaGen</span>
-              <span className="text-xs align-top bg-indigo-500/20 text-indigo-500 px-1.5 py-0.5 rounded ml-1">1.5</span>
+              <span className="text-xs align-top bg-indigo-500/20 text-indigo-500 px-1.5 py-0.5 rounded ml-1">3.5</span>
             </h1>
           </div>
         </div>
@@ -1137,6 +1112,54 @@ const HackyMetaGenApp = () => {
             {isAutoGenerate ? <Zap size={18}/> : <ZapOff size={18} />}
             {isAutoGenerate ? 'Auto Generate: ON' : 'Auto Generate: OFF'}
           </button>
+          
+          {/* Category Mode Toggle - Always Visible */}
+          <button
+            onClick={toggleCategoryMode}
+            className={`w-full py-2.5 px-4 rounded-xl border flex items-center justify-center gap-2 font-medium transition-all ${
+              useAiCategory
+                ? 'bg-green-600 border-green-600 text-white shadow-lg shadow-green-500/20' 
+                : 'bg-blue-100 border-blue-200 text-blue-700'
+            }`}
+          >
+            <Brain size={18} />
+            {useAiCategory ? 'AI Category: ON' : 'Default Category: ON'}
+          </button>
+          
+          {/* Replace All Filename Extensions in CSV */}
+          <div className="mt-1">
+            <label className={`text-[10px] font-bold uppercase tracking-wider mb-1 block pl-1 ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>
+              Replace All Filename Extensions in CSV
+            </label>
+            <div className="flex gap-2">
+              <button
+                onClick={handlePreserveExtension}
+                className={`flex-1 text-xs py-2.5 px-2 rounded-xl border font-medium transition-all ${
+                  preserveExtension
+                    ? 'bg-blue-600 border-blue-600 text-white shadow-lg'
+                    : theme === 'dark' ? 'bg-slate-800 border-slate-700 text-slate-400' : 'bg-white border-slate-300 text-slate-600'
+                }`}
+              >
+                Default Filename
+              </button>
+              <select
+                value={csvExtension}
+                onChange={(e) => handleGlobalExtensionChange(e.target.value)}
+                disabled={preserveExtension}
+                className={`w-1/2 text-xs p-2.5 rounded-xl border font-medium transition-all cursor-pointer ${
+                  preserveExtension ? 'opacity-50 cursor-not-allowed' : ''
+                } ${
+                  theme === 'dark' 
+                    ? 'bg-slate-800 border-slate-700 text-slate-300 focus:border-indigo-500 hover:bg-slate-700' 
+                    : 'bg-white border-slate-300 text-slate-600 focus:border-indigo-500 hover:bg-slate-50'
+                }`}
+              >
+                {['jpg', 'png', 'ai', 'eps', 'svg'].map(ext => (
+                  <option key={ext} value={ext}>.{ext}</option>
+                ))}
+              </select>
+            </div>
+          </div>
 
           {/* Batch List */}
           <div className={`flex-1 overflow-y-auto rounded-xl border h-48 lg:h-full lg:flex-1 ${theme === 'dark' ? 'bg-slate-800/30 border-slate-800' : 'bg-white border-slate-200'} p-2 space-y-2`}>
@@ -1266,9 +1289,10 @@ const HackyMetaGenApp = () => {
                       // Determine available extensions based on file type
                       const extensions = file.type === 'video' 
                         ? ['mov', 'mp4'] 
-                        : file.type === 'vector' 
-                          ? ['ai', 'eps', 'svg'] 
-                          : ['ai', 'png', 'jpg'];
+                        : ['jpg', 'png', 'ai', 'eps', 'svg']; // Updated order
+                        
+                      // The displayed filename should be the one in the state (which reflects the global replace)
+                      const displayFilename = file.name;
 
                       return (
                         <div key={file.id} className={`flex flex-col rounded-xl overflow-hidden border shadow-[0_8px_24px_rgba(0,0,0,0.06)] ${theme === 'dark' ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
@@ -1384,7 +1408,22 @@ const HackyMetaGenApp = () => {
                             {/* Category */}
                             <div>
                               <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1 block">Category</label>
-                              <div className="text-sm font-medium">Graphic Resources</div>
+                              
+                              <select
+                                value={file.categoryId || 8}
+                                onChange={(e) => updateFileCategory(file.id, e.target.value)}
+                                className={`w-full text-xs p-2 rounded border bg-transparent cursor-pointer ${
+                                  theme === 'dark' 
+                                    ? 'border-slate-700 text-slate-300 focus:border-indigo-500' 
+                                    : 'border-slate-300 text-slate-700 focus:border-indigo-500'
+                                }`}
+                              >
+                                {ADOBE_CATEGORIES.map(cat => (
+                                  <option key={cat.id} value={cat.id} className={theme === 'dark' ? 'bg-slate-800' : 'bg-white'}>
+                                    {cat.name}
+                                  </option>
+                                ))}
+                              </select>
                             </div>
                           </div>
 
@@ -1405,8 +1444,8 @@ const HackyMetaGenApp = () => {
                                 </button>
                               ))}
                             </div>
-                            <div className="text-xs truncate" title={file.name}>
-                              {file.name}
+                            <div className="text-xs truncate" title={displayFilename}>
+                              {displayFilename}
                             </div>
                           </div>
                         </div>
