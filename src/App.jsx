@@ -1365,7 +1365,7 @@ const HackyMetaGenApp = () => {
             <div className="h-full flex flex-col">
               <div className="mb-6">
                 <h3 className="text-2xl font-bold">Batch Review</h3>
-                <p className={`text-sm ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>Review metadata per image</p>
+                <p className={`text-sm ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>Review metadata for images / videos</p>
               </div>
               
               <div className="flex-1 lg:overflow-y-auto pr-2 pb-24">
