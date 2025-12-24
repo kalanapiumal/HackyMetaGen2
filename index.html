@@ -4,7 +4,22 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Hacky MetaGen 1.5</title>
+    <title>Hacky MetaGen 3.5</title>
+    <script>
+      // Initialize Favicon with 'H' logo
+      const svg = `
+        <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'>
+          <rect width='32' height='32' rx='8' fill='%234F46E5'/>
+          <text x='50%' y='55%' dominant-baseline='middle' text-anchor='middle' font-family='sans-serif' font-weight='bold' font-size='20' fill='white'>H</text>
+        </svg>
+      `.trim();
+      const faviconUrl = `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+      let link = document.createElement('link');
+      link.type = 'image/svg+xml';
+      link.rel = 'shortcut icon';
+      link.href = faviconUrl;
+      document.head.appendChild(link);
+    </script>
   </head>
   <body>
     <div id="root"></div>

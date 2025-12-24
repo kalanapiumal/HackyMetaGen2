@@ -30,6 +30,10 @@ import {
  * Built with React + Tailwind CSS + Gemini API
  */
 
+const MAX_TITLE_LENGTH = 125;
+const MIN_TITLE_LENGTH = 100; // Soft limit for validation
+const TARGET_KEYWORD_COUNT = 49;
+
 const ADOBE_CATEGORIES = [
   { id: 1, name: "Animals" },
   { id: 2, name: "Buildings and Architecture" },
@@ -56,7 +60,6 @@ const ADOBE_CATEGORIES = [
 
 const HackyMetaGenApp = () => {
   // --- State Management ---
-  // Initialize from localStorage if available, otherwise default
   const [theme, setTheme] = useState(() => localStorage.getItem('hackymetagen_theme') || 'dark');
   const [files, setFiles] = useState([]);
   const [selectedFileId, setSelectedFileId] = useState(null);
@@ -100,7 +103,7 @@ const HackyMetaGenApp = () => {
   const [fadeClass, setFadeClass] = useState('opacity-100 translate-y-0');
   
   const features = [
-    "Batch Processing Support",
+    "Video Metadata Support",
     "CSV FileName Extension Selection Support"
   ];
   
@@ -159,7 +162,7 @@ const HackyMetaGenApp = () => {
     }
   }, []);
 
-  // --- Helper Functions (Defined before usage) ---
+  // --- Helper Functions ---
 
   const toggleTheme = () => {
     setTheme(prev => prev === 'light' ? 'dark' : 'light');
@@ -221,7 +224,10 @@ const HackyMetaGenApp = () => {
   };
 
   const generateThumbnail = async (file) => {
-    if (file.type.startsWith('video/')) {
+    // Robust check for video files
+    const isVideo = file.type.startsWith('video/') || /\.(mov|mp4|avi|webm|mkv|mpg|mpeg)$/i.test(file.name);
+    
+    if (isVideo) {
       return new Promise((resolve) => {
         const video = document.createElement('video');
         video.preload = 'metadata';
@@ -287,6 +293,7 @@ const HackyMetaGenApp = () => {
     setPreserveExtension(false);
     
     setFiles(prev => prev.map(f => {
+      // Only update if it's NOT a video
       if (f.type !== 'video') {
          const originalName = f.file.name;
          const newName = originalName.replace(/\.[^/.]+$/, "") + "." + newExt;
@@ -387,7 +394,7 @@ const HackyMetaGenApp = () => {
     let base64Data = null;
     const ext = fileObj.file.name.split('.').pop().toLowerCase();
     
-    const isVideo = fileObj.file.type.startsWith('video/') || ['mov', 'mp4', 'avi', 'webm', 'mkv'].includes(ext);
+    const isVideo = fileObj.file.type.startsWith('video/') || ['mov', 'mp4', 'avi', 'webm', 'mkv', 'mpg', 'mpeg'].includes(ext);
 
     if (isVideo) {
         try {
@@ -428,11 +435,10 @@ const HackyMetaGenApp = () => {
         }
     }
 
-    // Build the category list string for the prompt
     const categoriesString = ADOBE_CATEGORIES.map(c => `${c.id}. ${c.name}`).join('\n');
 
     const systemPrompt = `
-      You are Hacky MetaGen 1.0, a senior SEO expert for Adobe Stock.
+      You are Hacky MetaGen 3.5, a senior SEO expert for Adobe Stock.
       Your goal is to generate metadata for this ${fileObj.type} to maximize discoverability.
       ${isVideo ? "Note: The input provided is a sequence of 5 frames extracted from the video to represent the WHOLE video action/story." : ""}
       
@@ -614,13 +620,36 @@ const HackyMetaGenApp = () => {
     const newFilesPromises = uploadedFiles.map(async (file) => {
       let fileName = file.name;
       const isMov = fileName.toLowerCase().endsWith('.mov');
+      const ext = fileName.split('.').pop().toLowerCase();
+      
+      // Auto-detect type based on extension
+      let determinedType = contentType; // default to current tab
+      
+      // Updated video detection
+      if (['mov', 'mp4', 'avi', 'webm', 'mkv', 'mpg', 'mpeg'].includes(ext) || file.type.startsWith('video/')) {
+        determinedType = 'video';
+      } else if (['ai', 'eps', 'svg'].includes(ext)) {
+        determinedType = 'vector';
+      } else {
+        determinedType = 'image';
+      }
 
-      if (contentType === 'image' && !isMov) {
+      if (determinedType === 'image' && !isMov) {
         if (!preserveExtension) {
-            fileName = fileName.replace(/\.[^/.]+$/, "") + "." + csvExtension;
+            // Apply current selected image extension, NOT video ones
+            const currentCsvExt = ['mov', 'mp4', 'mpg'].includes(csvExtension) ? 'ai' : csvExtension;
+            fileName = fileName.replace(/\.[^/.]+$/, "") + "." + currentCsvExt;
         } else {
             fileName = file.name;
         }
+      } else if (determinedType === 'video') {
+         if (!preserveExtension) {
+             // If a video extension is selected, use it, otherwise keep default or map appropriately
+             const videoExt = ['mov', 'mp4', 'mpg'].includes(csvExtension) ? csvExtension : 'mov'; 
+             fileName = fileName.replace(/\.[^/.]+$/, "") + "." + videoExt;
+         } else {
+             fileName = file.name;
+         }
       }
 
       const previewUrl = await generateThumbnail(file);
@@ -631,7 +660,7 @@ const HackyMetaGenApp = () => {
         file,
         name: fileName,
         preview: previewUrl,
-        type: contentType,
+        type: determinedType, // Use auto-detected type
         status: initialStatus,
         categoryId: 8, 
         aiCategoryId: null, 
@@ -840,6 +869,10 @@ const HackyMetaGenApp = () => {
     updateFileKeywords(activeFile.id, updatedKeywordsString);
     setDraggedIndex(null);
   };
+  
+  const handleToggleTheme = () => {
+    toggleTheme();
+  };
 
   // --- Render Components ---
 
@@ -850,15 +883,55 @@ const HackyMetaGenApp = () => {
   const totalFiles = files.length;
   const progressPercent = totalFiles > 0 ? (completeFiles.length / totalFiles) * 100 : 0;
 
+  // --- Main Render Return ---
   return (
-    <div className={`min-h-screen w-full transition-colors duration-300 pb-20 ${theme === 'dark' ? 'bg-slate-900 text-slate-100' : 'bg-slate-50 text-slate-900'}`}>
+    <div 
+      className={`min-h-screen w-full transition-colors duration-300 pb-20 ${theme === 'dark' ? 'bg-slate-900 text-slate-100' : 'bg-slate-50 text-slate-900'}`}
+      // ADDED: Explicit drop handlers on the main container as a fail-safe
+      onDragOver={(e) => { 
+        e.preventDefault(); 
+        e.stopPropagation(); 
+        if (!isGlobalDragging) setIsGlobalDragging(true); 
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsGlobalDragging(false);
+        dragCounter.current = 0;
+        if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+          processUploadedFiles(Array.from(e.dataTransfer.files));
+        }
+      }}
+    >
       
       {/* GLOBAL DRAG OVERLAY */}
       {isGlobalDragging && (
-        <div className="fixed inset-0 z-50 bg-indigo-900/90 backdrop-blur-sm border-4 border-indigo-500 border-dashed m-4 rounded-2xl flex flex-col items-center justify-center animate-in fade-in duration-200">
-          <Upload size={64} className="text-white mb-4 animate-bounce" />
-          <h2 className="text-3xl font-bold text-white mb-2">Drop files anywhere!</h2>
-          <p className="text-indigo-200 text-lg">Support for Images, Videos, and Vectors</p>
+        <div 
+          className={`fixed inset-0 z-50 bg-indigo-900/90 backdrop-blur-sm border-4 border-indigo-500 border-dashed m-4 rounded-2xl flex flex-col items-center justify-center animate-in fade-in duration-200`}
+          onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+          onDrop={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setIsGlobalDragging(false);
+            dragCounter.current = 0;
+            if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+              processUploadedFiles(Array.from(e.dataTransfer.files));
+            }
+          }}
+          onDragLeave={(e) => {
+             e.preventDefault();
+             e.stopPropagation();
+             // Only if leaving the actual overlay div (not child elements)
+             if (e.target === e.currentTarget) {
+                 setIsGlobalDragging(false);
+                 dragCounter.current = 0;
+             }
+          }}
+        >
+           {/* ADDED: pointer-events-none to children to prevent dragleave flickering */}
+          <Upload size={64} className="text-white mb-4 animate-bounce pointer-events-none" />
+          <h2 className="text-3xl font-bold text-white mb-2 pointer-events-none">Drop files anywhere!</h2>
+          <p className="text-indigo-200 text-lg pointer-events-none">Support for Images, Videos, and Vectors</p>
         </div>
       )}
 
@@ -1062,6 +1135,17 @@ const HackyMetaGenApp = () => {
           {/* Upload Area */}
           <div 
             onClick={() => fileInputRef.current.click()}
+            // Added explicit drag handlers to the drop zone for better reliability
+            onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setIsGlobalDragging(true); }}
+            onDrop={(e) => {
+                e.preventDefault(); 
+                e.stopPropagation(); 
+                setIsGlobalDragging(false);
+                dragCounter.current = 0;
+                if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                    processUploadedFiles(Array.from(e.dataTransfer.files));
+                }
+            }}
             className={`flex-1 min-h-[120px] max-h-[160px] border-2 border-dashed rounded-xl flex flex-col items-center justify-center cursor-pointer transition-all group relative overflow-hidden ${
               theme === 'dark' 
                 ? 'border-slate-700 hover:border-indigo-500 hover:bg-slate-800/50' 
@@ -1082,7 +1166,9 @@ const HackyMetaGenApp = () => {
             <p className="font-medium text-slate-300 group-hover:text-indigo-400">
               {contentType === 'video' ? 'Drop videos here' : contentType === 'vector' ? 'Drop vectors here' : 'Drop images here'}
             </p>
-            <p className="text-xs text-slate-500">or click to browse</p>
+            <p className="text-xs text-slate-500 mt-1">
+              <span className="underline decoration-dashed underline-offset-4 group-hover:text-indigo-400 transition-colors">Click to browse</span> files on your PC
+            </p>
           </div>
 
           {/* Reset Uploads Button */}
@@ -1122,7 +1208,7 @@ const HackyMetaGenApp = () => {
                 : 'bg-blue-100 border-blue-200 text-blue-700'
             }`}
           >
-            <Brain size={18} />
+            {useAiCategory ? <Brain size={18} /> : <LayoutGrid size={18} />}
             {useAiCategory ? 'AI Category: ON' : 'Default Category: ON'}
           </button>
           
@@ -1154,9 +1240,16 @@ const HackyMetaGenApp = () => {
                     : 'bg-white border-slate-300 text-slate-600 focus:border-indigo-500 hover:bg-slate-50'
                 }`}
               >
-                {['jpg', 'png', 'ai', 'eps', 'svg'].map(ext => (
-                  <option key={ext} value={ext}>.{ext}</option>
-                ))}
+                 <optgroup label="Image / Vector">
+                  {['jpg', 'png', 'ai', 'eps', 'svg'].map(ext => (
+                    <option key={ext} value={ext}>.{ext}</option>
+                  ))}
+                </optgroup>
+                <optgroup label="Video">
+                   {['mov', 'mp4', 'mpg'].map(ext => (
+                    <option key={ext} value={ext}>.{ext}</option>
+                  ))}
+                </optgroup>
               </select>
             </div>
           </div>
@@ -1277,9 +1370,27 @@ const HackyMetaGenApp = () => {
               
               <div className="flex-1 lg:overflow-y-auto pr-2 pb-24">
                 {files.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center h-64 border-2 border-dashed rounded-xl border-slate-700">
-                    <p className="text-slate-500">No completed files to review yet.</p>
-                    <p className="text-xs text-slate-600 mt-1">Click "Generate All" to start.</p>
+                  <div 
+                    onClick={() => fileInputRef.current.click()}
+                    className={`flex flex-col items-center justify-center h-64 border-2 border-dashed rounded-xl cursor-pointer transition-colors ${
+                      theme === 'dark' 
+                        ? 'border-slate-700 bg-slate-800/30 hover:bg-slate-800/50' 
+                        : 'border-slate-300 bg-slate-50 hover:bg-slate-100'
+                    }`}
+                  >
+                    <Upload size={48} className="text-blue-500 animate-bounce mb-4" />
+                    <p className={`text-lg font-medium mb-1 ${theme === 'dark' ? 'text-slate-300' : 'text-slate-600'}`}>Drop Images or Videos here</p>
+                    <p className="text-sm text-indigo-500 font-medium mb-4 hover:underline">Click to browse on your PC</p>
+                    
+                    <div className={`text-xs text-center max-w-sm leading-relaxed ${theme === 'dark' ? 'text-slate-500' : 'text-slate-500'}`}>
+                      <p className="font-semibold mb-1 uppercase tracking-wider text-slate-400">Supported Formats</p>
+                      <p>
+                        <span className="text-blue-500 font-medium">Image / Vector:</span> .jpg .png .ai .eps .svg
+                      </p>
+                      <p>
+                        <span className="text-blue-500 font-medium">Video:</span> .mov .mp4 .mpg
+                      </p>
+                    </div>
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
@@ -1287,8 +1398,9 @@ const HackyMetaGenApp = () => {
                       const currentExt = file.name.split('.').pop().toLowerCase();
                       
                       // Determine available extensions based on file type
+                      // Updated check to verify if the file object type is video
                       const extensions = file.type === 'video' 
-                        ? ['mov', 'mp4'] 
+                        ? ['mov', 'mp4', 'mpg'] 
                         : ['jpg', 'png', 'ai', 'eps', 'svg']; // Updated order
                         
                       // The displayed filename should be the one in the state (which reflects the global replace)
