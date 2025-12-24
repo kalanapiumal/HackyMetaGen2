@@ -224,6 +224,17 @@ const HackyMetaGenApp = () => {
 
   // --- Helper: Process Files (Upload Handler) ---
   const processUploadedFiles = useCallback(async (uploadedFiles) => {
+    // Check for API Key first
+    const activeKey = userApiKey || localStorage.getItem('hackymetagen_api_key') || envApiKey;
+    if (!activeKey) {
+      setShowTutorial(true);
+      // Reset file input so change event fires if they try again with same file
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+      return;
+    }
+
     // Capture the current session ID when upload starts
     const currentSession = sessionId.current;
 
@@ -283,7 +294,7 @@ const HackyMetaGenApp = () => {
         runBatchGeneration(newFiles);
     }
 
-  }, [contentType, files.length, selectedFileId, isAutoGenerate]);
+  }, [contentType, files.length, selectedFileId, isAutoGenerate, userApiKey]);
 
   // --- Global Drag and Drop Handlers ---
   useEffect(() => {
@@ -711,20 +722,14 @@ const HackyMetaGenApp = () => {
           };
           
           // Update State Incrementally (Show complete ones first)
-          // IMPORTANT: Check if file still exists in state (wasn't reset)
-          setFiles(prev => {
-            // If the file is not in the current state (because of reset), don't add it back or update it
-            if (!prev.find(f => f.id === file.id)) return prev;
-
-            return prev.map(f => 
-              f.id === file.id ? { 
-                ...f, 
-                status: 'complete', 
-                metadata: jsonResult,
-                keywordAnalysis: analysis
-              } : f
-            );
-          });
+          setFiles(prev => prev.map(f => 
+            f.id === file.id ? { 
+              ...f, 
+              status: 'complete', 
+              metadata: jsonResult,
+              keywordAnalysis: analysis
+            } : f
+          ));
 
         } catch (error) {
           console.error(`Error processing ${file.name}:`, error);
