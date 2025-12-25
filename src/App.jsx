@@ -638,6 +638,7 @@ const HackyMetaGenApp = () => {
          for (const file of filesToProcess) {
             let retries = 1; // CHANGED: Set to 1 to try once and fail fast if error
             let success = false;
+            let delay = 5000; // Base delay 5s
             let lastError = null;
 
             // Check if file still exists in state (wasn't reset)
@@ -909,12 +910,11 @@ const HackyMetaGenApp = () => {
       console.error("Generation Error:", error);
       
       let displayError = error.message || "Unknown error";
-      if (displayError.includes("API Key") || displayError.includes("403") || displayError.includes("400") || displayError.includes("Invalid") || displayError.includes("Quota") || displayError.includes("429") || displayError.includes("API Error")) {
+      if (displayError.includes("API Key") || displayError.includes("403") || displayError.includes("400") || displayError.includes("Invalid")) {
          displayError = "Check or replace to a new api key. (" + displayError + ")";
          // --- NEW: Trigger Invalid Key State UI ---
          setIsKeyInvalid(true);
          setIsKeySaved(false);
-         setUserApiKey(''); // Clear to show placeholder
       }
 
       setFiles(prev => prev.map(f => f.id === fileObj.id ? { ...f, status: 'error', errorMessage: displayError } : f));
@@ -1468,7 +1468,7 @@ const HackyMetaGenApp = () => {
                   }`}
                 >
                   {viewMode === 'batch' ? <PenTool size={18}/> : <LayoutGrid size={18} />}
-                  {viewMode === 'batch' ? 'Open Editor' : 'Batch Review'}
+                  {viewMode === 'batch' ? 'Open Editor' : 'Multi-File Review'}
                 </button>
 
               <div className="flex gap-2">
@@ -1503,8 +1503,8 @@ const HackyMetaGenApp = () => {
             /* --- BATCH REVIEW GRID (Review & Polish) --- */
             <div className="h-full flex flex-col">
               <div className="mb-6">
-                <h3 className="text-2xl font-bold">Batch Review</h3>
-                <p className={`text-sm ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>Review metadata for images</p>
+                <h3 className="text-2xl font-bold">Multi-File Review</h3>
+                <p className={`text-sm ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>Review Metadata</p>
               </div>
               
               <div className="flex-1 lg:overflow-y-auto pr-2 pb-24">
@@ -1563,9 +1563,14 @@ const HackyMetaGenApp = () => {
                                 {file.status === 'complete' ? 'Done' : file.status}
                               </span>
                             </div>
-                            <button onClick={() => { setSelectedFileId(file.id); setViewMode('editor'); }} className="text-slate-400 hover:text-indigo-400">
-                              <Maximize2 size={14} />
-                            </button>
+                            <div className="flex items-center gap-2">
+                              <button onClick={(e) => removeFile(file.id, e)} className="text-slate-400 hover:text-red-400 transition-colors" title="Delete">
+                                <Trash2 size={14} />
+                              </button>
+                              <button onClick={() => { setSelectedFileId(file.id); setViewMode('editor'); }} className="text-slate-400 hover:text-indigo-400 transition-colors" title="Open Editor">
+                                <PenTool size={14} />
+                              </button>
+                            </div>
                           </div>
 
                           {/* Image */}
