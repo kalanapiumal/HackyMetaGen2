@@ -260,14 +260,19 @@ const HackyMetaGenApp = () => {
         };
 
         video.onseeked = () => {
-          const canvas = document.createElement('canvas');
-          canvas.width = video.videoWidth;
-          canvas.height = video.videoHeight;
-          const ctx = canvas.getContext('2d');
-          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-          const dataUrl = canvas.toDataURL('image/jpeg');
-          URL.revokeObjectURL(video.src);
-          resolve(dataUrl);
+          clearTimeout(videoTimeout);
+          try {
+            const canvas = document.createElement('canvas');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            const dataUrl = canvas.toDataURL('image/jpeg');
+            URL.revokeObjectURL(video.src);
+            resolve(dataUrl);
+          } catch(e) {
+             resolve(null);
+          }
         };
 
         video.onerror = () => {
@@ -487,17 +492,19 @@ const HackyMetaGenApp = () => {
     const timeoutId = setTimeout(() => controller.abort(), 60000); // 60s timeout per request
 
     try {
-        // CHANGED: Point to local backend instead of Gemini directly
-        const response = await fetch('http://localhost:3001/api/generate', {
+        // Prepare payload (simplified for backend call)
+        const payload = {
+            apiKey: activeKey,
+            mimeType: mimeType,
+            data: base64Data, // Single string or array
+            fileType: fileObj.type,
+            isVideo: isVideo
+        };
+
+        const response = await fetch('/api/generate', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                apiKey: activeKey,
-                mimeType: mimeType,
-                data: base64Data, // Single string or array
-                fileType: fileObj.type,
-                isVideo: isVideo
-            }),
+            body: JSON.stringify(payload),
             signal: controller.signal
         });
 
@@ -519,8 +526,10 @@ const HackyMetaGenApp = () => {
             throw new Error("Invalid JSON response from API");
         }
 
+        // Check if backend returned an error structure
         if (data.error) throw new Error(data.error);
         
+        // Parse the Gemini response structure
         if (!data.candidates || !data.candidates[0]) {
            throw new Error("No candidates returned from AI");
         }
@@ -545,13 +554,13 @@ const HackyMetaGenApp = () => {
         const lastBrace = resultText.lastIndexOf('}');
 
         if (firstBrace !== -1 && lastBrace !== -1) {
-        resultText = resultText.substring(firstBrace, lastBrace + 1);
+          resultText = resultText.substring(firstBrace, lastBrace + 1);
         } else {
-        resultText = resultText.replace(/```json/g, '').replace(/```/g, '').trim();
+          resultText = resultText.replace(/```json/g, '').replace(/```/g, '').trim();
         }
         
         if (!resultText.trim()) {
-        throw new Error("No JSON found in response");
+           throw new Error("No JSON found in response");
         }
 
         const parsedResult = JSON.parse(resultText);

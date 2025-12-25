@@ -1,13 +1,13 @@
-import express from 'express';
-import cors from 'cors';
+// Vercel Serverless Function
+// This replaces server.js for Vercel hosting
 
-const app = express();
-const PORT = 3001; // Backend runs on port 3001
-
-// Enable CORS to allow requests from your frontend
-app.use(cors());
-// Increase payload limit to handle base64 image data
-app.use(express.json({ limit: '50mb' }));
+export const config = {
+    api: {
+        bodyParser: {
+            sizeLimit: '4.5mb', // Vercel has a payload limit of 4.5MB for serverless functions
+        },
+    },
+};
 
 const ADOBE_CATEGORIES = [
   { id: 1, name: "Animals" },
@@ -35,10 +35,9 @@ const ADOBE_CATEGORIES = [
 
 const categoriesString = ADOBE_CATEGORIES.map(c => `${c.id}. ${c.name}`).join('\n');
 
-// This is your protected logic, now hidden on the server
 const generateSystemPrompt = (fileType, isVideo) => `
   You are Hacky MetaGen 3.5, a senior SEO expert for Adobe Stock.
-  Your goal is to generate metadata for this ${fileObj.type} to maximize discoverability.
+  Your goal is to generate metadata for this ${fileType} to maximize discoverability.
   ${isVideo ? "Note: The input provided is a sequence of 5 frames extracted from the video to represent the WHOLE video action/story." : ""}
   
   STRICT RULES:
@@ -72,23 +71,38 @@ const generateSystemPrompt = (fileType, isVideo) => `
   }
 `;
 
-app.post('/api/generate', async (req, res) => {
+export default async function handler(req, res) {
+  // Allow CORS
+  res.setHeader('Access-Control-Allow-Credentials', true);
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
+  res.setHeader(
+    'Access-Control-Allow-Headers',
+    'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
+  );
+
+  if (req.method === 'OPTIONS') {
+    res.status(200).end();
+    return;
+  }
+
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method Not Allowed' });
+  }
+
   const { apiKey, mimeType, data, fileType, isVideo } = req.body;
 
   if (!apiKey) {
     return res.status(400).json({ error: "API Key is required" });
   }
 
-  // Construct content parts for Gemini
   const contentParts = [{ text: generateSystemPrompt(fileType || 'image', isVideo) }];
 
   if (isVideo && Array.isArray(data)) {
-    // Handle Video Frames
     data.forEach(frameData => {
       contentParts.push({ inlineData: { mimeType: mimeType, data: frameData } });
     });
   } else {
-    // Handle Single Image
     contentParts.push({ inlineData: { mimeType: mimeType, data: data } });
   }
 
@@ -109,17 +123,11 @@ app.post('/api/generate', async (req, res) => {
         });
     }
 
-    const data = await response.json();
-    
-    // Pass the raw Gemini response back to the frontend
-    res.json(data);
+    const result = await response.json();
+    res.status(200).json(result);
 
   } catch (error) {
     console.error("Server Error:", error);
     res.status(500).json({ error: "Internal Server Error during processing" });
   }
-});
-
-app.listen(PORT, () => {
-  console.log(`Backend Server running on http://localhost:${PORT}`);
-});
+}
