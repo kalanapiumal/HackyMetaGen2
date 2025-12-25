@@ -154,9 +154,27 @@ const HackyMetaGenApp = () => {
     return () => clearInterval(interval);
   }, []);
 
-  // Set Document Title (Favicon handled in HTML)
+  // Set Document Title and Favicon
   useEffect(() => {
     document.title = "Hacky MetaGen";
+    const setFavicon = () => {
+      const svg = `
+        <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'>
+          <rect width='32' height='32' rx='8' fill='%232563EB'/>
+          <text x='50%' y='55%' dominant-baseline='middle' text-anchor='middle' font-family='sans-serif' font-weight='bold' font-size='20' fill='white'>H</text>
+        </svg>
+      `.trim();
+      const faviconUrl = `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+      let link = document.querySelector("link[rel*='icon']");
+      if (!link) {
+        link = document.createElement('link');
+        link.type = 'image/svg+xml';
+        link.rel = 'shortcut icon';
+        document.getElementsByTagName('head')[0].appendChild(link);
+      }
+      link.href = faviconUrl;
+    };
+    setFavicon();
   }, []);
 
   // Load API Key from local storage on mount
@@ -896,7 +914,6 @@ const HackyMetaGenApp = () => {
          // --- NEW: Trigger Invalid Key State UI ---
          setIsKeyInvalid(true);
          setIsKeySaved(false);
-         setUserApiKey(''); // Clear to show placeholder
       }
 
       setFiles(prev => prev.map(f => f.id === fileObj.id ? { ...f, status: 'error', errorMessage: displayError } : f));
@@ -1485,8 +1502,8 @@ const HackyMetaGenApp = () => {
             /* --- BATCH REVIEW GRID (Review & Polish) --- */
             <div className="h-full flex flex-col">
               <div className="mb-6">
-                <h3 className="text-2xl font-bold">Multi-File Review</h3>
-                <p className={`text-sm ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>Review Metadata</p>
+                <h3 className="text-2xl font-bold">Batch Review</h3>
+                <p className={`text-sm ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>Review your metadata here</p>
               </div>
               
               <div className="flex-1 lg:overflow-y-auto pr-2 pb-24">
