@@ -154,27 +154,9 @@ const HackyMetaGenApp = () => {
     return () => clearInterval(interval);
   }, []);
 
-  // Set Document Title and Favicon
+  // Set Document Title (Favicon handled in HTML)
   useEffect(() => {
     document.title = "Hacky MetaGen";
-    const setFavicon = () => {
-      const svg = `
-        <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'>
-          <rect width='32' height='32' rx='8' fill='%232563EB'/>
-          <text x='50%' y='55%' dominant-baseline='middle' text-anchor='middle' font-family='sans-serif' font-weight='bold' font-size='20' fill='white'>H</text>
-        </svg>
-      `.trim();
-      const faviconUrl = `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
-      let link = document.querySelector("link[rel*='icon']");
-      if (!link) {
-        link = document.createElement('link');
-        link.type = 'image/svg+xml';
-        link.rel = 'shortcut icon';
-        document.getElementsByTagName('head')[0].appendChild(link);
-      }
-      link.href = faviconUrl;
-    };
-    setFavicon();
   }, []);
 
   // Load API Key from local storage on mount
@@ -638,7 +620,6 @@ const HackyMetaGenApp = () => {
          for (const file of filesToProcess) {
             let retries = 1; // CHANGED: Set to 1 to try once and fail fast if error
             let success = false;
-            let delay = 5000; // Base delay 5s
             let lastError = null;
 
             // Check if file still exists in state (wasn't reset)
@@ -915,6 +896,7 @@ const HackyMetaGenApp = () => {
          // --- NEW: Trigger Invalid Key State UI ---
          setIsKeyInvalid(true);
          setIsKeySaved(false);
+         setUserApiKey(''); // Clear to show placeholder
       }
 
       setFiles(prev => prev.map(f => f.id === fileObj.id ? { ...f, status: 'error', errorMessage: displayError } : f));
