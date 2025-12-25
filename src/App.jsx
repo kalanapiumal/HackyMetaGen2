@@ -30,6 +30,7 @@ import {
  * Built with React + Tailwind CSS + Gemini API
  */
 
+// --- Constants ---
 const MAX_TITLE_LENGTH = 125;
 const MIN_TITLE_LENGTH = 100; // Soft limit for validation
 const TARGET_KEYWORD_COUNT = 49;
@@ -98,6 +99,9 @@ const HackyMetaGenApp = () => {
   // Session Management
   const sessionId = useRef(0);
   
+  // Mutex for sequential processing
+  const processingMutex = useRef(Promise.resolve());
+  
   // Animation State for Feature Badge
   const [featureIndex, setFeatureIndex] = useState(0);
   const [fadeClass, setFadeClass] = useState('opacity-100 translate-y-0');
@@ -119,28 +123,24 @@ const HackyMetaGenApp = () => {
   
   const fileInputRef = useRef(null);
 
+  // --- Refs for Async Access ---
+  const csvExtensionRef = useRef(csvExtension);
+  const preserveExtensionRef = useRef(preserveExtension);
+  const filesRef = useRef(files); // Ref to track files in async loops
+
   // --- Effects ---
 
+  // Update Refs
+  useEffect(() => { csvExtensionRef.current = csvExtension; }, [csvExtension]);
+  useEffect(() => { preserveExtensionRef.current = preserveExtension; }, [preserveExtension]);
+  useEffect(() => { filesRef.current = files; }, [files]);
+
   // Persistence Effects for Buttons
-  useEffect(() => {
-    localStorage.setItem('hackymetagen_theme', theme);
-  }, [theme]);
-
-  useEffect(() => {
-    localStorage.setItem('hackymetagen_auto_generate', JSON.stringify(isAutoGenerate));
-  }, [isAutoGenerate]);
-
-  useEffect(() => {
-    localStorage.setItem('hackymetagen_use_ai_category', JSON.stringify(useAiCategory));
-  }, [useAiCategory]);
-
-  useEffect(() => {
-    localStorage.setItem('hackymetagen_csv_extension', csvExtension);
-  }, [csvExtension]);
-
-  useEffect(() => {
-    localStorage.setItem('hackymetagen_preserve_extension', JSON.stringify(preserveExtension));
-  }, [preserveExtension]);
+  useEffect(() => { localStorage.setItem('hackymetagen_theme', theme); }, [theme]);
+  useEffect(() => { localStorage.setItem('hackymetagen_auto_generate', JSON.stringify(isAutoGenerate)); }, [isAutoGenerate]);
+  useEffect(() => { localStorage.setItem('hackymetagen_use_ai_category', JSON.stringify(useAiCategory)); }, [useAiCategory]);
+  useEffect(() => { localStorage.setItem('hackymetagen_csv_extension', csvExtension); }, [csvExtension]);
+  useEffect(() => { localStorage.setItem('hackymetagen_preserve_extension', JSON.stringify(preserveExtension)); }, [preserveExtension]);
 
   // Feature Badge Animation Loop
   useEffect(() => {
@@ -152,6 +152,29 @@ const HackyMetaGenApp = () => {
       }, 300);
     }, 5000); 
     return () => clearInterval(interval);
+  }, []);
+
+  // Set Document Title and Favicon
+  useEffect(() => {
+    document.title = "Hacky MetaGen";
+    const setFavicon = () => {
+      const svg = `
+        <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'>
+          <rect width='32' height='32' rx='8' fill='%232563EB'/>
+          <text x='50%' y='55%' dominant-baseline='middle' text-anchor='middle' font-family='sans-serif' font-weight='bold' font-size='20' fill='white'>H</text>
+        </svg>
+      `.trim();
+      const faviconUrl = `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+      let link = document.querySelector("link[rel*='icon']");
+      if (!link) {
+        link = document.createElement('link');
+        link.type = 'image/svg+xml';
+        link.rel = 'shortcut icon';
+        document.getElementsByTagName('head')[0].appendChild(link);
+      }
+      link.href = faviconUrl;
+    };
+    setFavicon();
   }, []);
 
   // Load API Key from local storage on mount
@@ -168,16 +191,29 @@ const HackyMetaGenApp = () => {
     setTheme(prev => prev === 'light' ? 'dark' : 'light');
   };
 
+  // Dedicated function to check key validity
+  const checkApiKeyValidity = async (key) => {
+    if (!key) return false;
+    try {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}&pageSize=1`);
+      return response.ok;
+    } catch (e) {
+      return false;
+    }
+  };
+
   const handleApplyKey = async () => {
     const keyToTest = userApiKey.trim();
     if (!keyToTest) return;
 
     setIsVerifying(true);
+    
+    // Use new helper
+    const isValid = await checkApiKeyValidity(keyToTest);
 
-    try {
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${keyToTest}&pageSize=1`);
-      
-      if (response.ok) {
+    setIsVerifying(false);
+
+    if (isValid) {
         localStorage.setItem('hackymetagen_api_key', keyToTest);
         setIsKeySaved(true);
         setIsKeyInvalid(false);
@@ -189,22 +225,17 @@ const HackyMetaGenApp = () => {
         setTimeout(() => {
           setShowSuccessMessage(false);
         }, 5000);
-      } else {
-        throw new Error("Invalid API Key");
-      }
-    } catch (error) {
-      setIsKeyInvalid(true);
-      setIsKeySaved(false);
-      setUserApiKey(''); 
-      
-      setShowErrorMessage(true);
-      setShowSuccessMessage(false);
-      
-      setTimeout(() => {
-        setShowErrorMessage(false);
-      }, 5000);
-    } finally {
-      setIsVerifying(false);
+    } else {
+        setIsKeyInvalid(true);
+        setIsKeySaved(false);
+        setUserApiKey(''); 
+        
+        setShowErrorMessage(true);
+        setShowSuccessMessage(false);
+        
+        setTimeout(() => {
+          setShowErrorMessage(false);
+        }, 5000);
     }
   };
 
@@ -236,22 +267,34 @@ const HackyMetaGenApp = () => {
         video.playsInline = true;
         video.currentTime = 1;
 
+        // Safety timeout for video parsing
+        const videoTimeout = setTimeout(() => {
+             // Fallback if video takes too long
+             resolve(null);
+        }, 5000); // 5s timeout
+
         video.onloadeddata = () => {
           if (video.duration < 1) video.currentTime = 0;
         };
 
         video.onseeked = () => {
-          const canvas = document.createElement('canvas');
-          canvas.width = video.videoWidth;
-          canvas.height = video.videoHeight;
-          const ctx = canvas.getContext('2d');
-          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-          const dataUrl = canvas.toDataURL('image/jpeg');
-          URL.revokeObjectURL(video.src);
-          resolve(dataUrl);
+          clearTimeout(videoTimeout);
+          try {
+            const canvas = document.createElement('canvas');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            const dataUrl = canvas.toDataURL('image/jpeg');
+            URL.revokeObjectURL(video.src);
+            resolve(dataUrl);
+          } catch(e) {
+             resolve(null);
+          }
         };
 
         video.onerror = () => {
+          clearTimeout(videoTimeout);
           URL.revokeObjectURL(video.src);
           resolve(null);
         };
@@ -292,10 +335,18 @@ const HackyMetaGenApp = () => {
     setCsvExtension(newExt);
     setPreserveExtension(false);
     
+    // Check if the selected extension is a video format
+    const isVideoExt = ['mov', 'mp4', 'mpg'].includes(newExt);
+
     setFiles(prev => prev.map(f => {
-      // Only update if it's NOT a video
-      if (f.type !== 'video') {
-         const originalName = f.file.name;
+      // Only update if file is complete (don't touch pending/processing files)
+      if (f.status !== 'complete') return f;
+
+      const isVideoFile = f.type === 'video';
+      
+      // Update filename ONLY if file type matches extension type
+      if (isVideoFile === isVideoExt) {
+         const originalName = f.file.name; // Use original name as base
          const newName = originalName.replace(/\.[^/.]+$/, "") + "." + newExt;
          return { ...f, name: newName };
       }
@@ -308,13 +359,25 @@ const HackyMetaGenApp = () => {
     setPreserveExtension(nextState);
 
     if (nextState) {
-        setFiles(prev => prev.map(f => ({ ...f, name: f.file.name })));
-    } else {
+        // Revert all COMPLETE files to original
         setFiles(prev => prev.map(f => {
-            if (f.type !== 'video') {
-                const originalName = f.file.name;
-                const newName = originalName.replace(/\.[^/.]+$/, "") + "." + csvExtension;
-                return { ...f, name: newName };
+            if (f.status === 'complete') {
+                return { ...f, name: f.file.name };
+            }
+            return f;
+        }));
+    } else {
+        // Apply current CSV extension to all COMPLETE files
+        setFiles(prev => prev.map(f => {
+            if (f.status === 'complete') {
+                const isVideoFile = f.type === 'video';
+                const isVideoExt = ['mov', 'mp4', 'mpg'].includes(csvExtension);
+                
+                if (isVideoFile === isVideoExt) {
+                   const originalName = f.file.name;
+                   const newName = originalName.replace(/\.[^/.]+$/, "") + "." + csvExtension;
+                   return { ...f, name: newName };
+                }
             }
             return f;
         }));
@@ -336,12 +399,18 @@ const HackyMetaGenApp = () => {
       const frames = [];
       let currentFrame = 0;
 
+      // Safety timeout for video parsing
+      const videoTimeout = setTimeout(() => {
+             reject(new Error("Video parsing timed out. Format might be unsupported."));
+      }, 15000); // 15s timeout for frame extraction
+
       video.onloadedmetadata = () => {
         const duration = video.duration;
         const step = duration / frameCount;
         
         const captureFrame = () => {
           if (currentFrame >= frameCount) {
+            clearTimeout(videoTimeout);
             URL.revokeObjectURL(url);
             resolve(frames);
             return;
@@ -381,6 +450,7 @@ const HackyMetaGenApp = () => {
       };
 
       video.onerror = () => {
+        clearTimeout(videoTimeout);
         URL.revokeObjectURL(url);
         reject(new Error("Failed to load video for frame extraction"));
       };
@@ -482,127 +552,195 @@ const HackyMetaGenApp = () => {
       contentParts.push({ inlineData: { mimeType: mimeType, data: base64Data } });
     }
 
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${activeKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{
-          parts: contentParts
-        }],
-        generationConfig: {
-          responseMimeType: "application/json"
+    // ADDED: AbortController for timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 60000); // 60s timeout per request
+
+    try {
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${activeKey}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                contents: [{
+                parts: contentParts
+                }],
+                generationConfig: {
+                responseMimeType: "application/json"
+                }
+            }),
+            signal: controller.signal
+        });
+
+        if (!response.ok) {
+            let errorMsg = `API Error: ${response.status} ${response.statusText}`;
+            try {
+                const errorData = await response.json();
+                if (errorData.error && errorData.error.message) {
+                    errorMsg = `API Error: ${errorData.error.message}`;
+                }
+            } catch (e) {}
+            throw new Error(errorMsg);
         }
-      })
-    });
 
-    if (!response.ok) {
-        let errorMsg = `API Error: ${response.status} ${response.statusText}`;
+        let data;
         try {
-            const errorData = await response.json();
-            if (errorData.error && errorData.error.message) {
-                errorMsg = `API Error: ${errorData.error.message}`;
-            }
-        } catch (e) {}
-        throw new Error(errorMsg);
-    }
+            data = await response.json();
+        } catch (e) {
+            throw new Error("Invalid JSON response from API");
+        }
 
-    let data;
-    try {
-        data = await response.json();
-    } catch (e) {
-        throw new Error("Invalid JSON response from API");
-    }
+        if (data.error) throw new Error(data.error.message);
+        
+        if (!data.candidates || !data.candidates[0]) {
+        throw new Error("No candidates returned from AI");
+        }
 
-    if (data.error) throw new Error(data.error.message);
-    
-    if (!data.candidates || !data.candidates[0]) {
-       throw new Error("No candidates returned from AI");
-    }
+        const candidate = data.candidates[0];
+        
+        if (candidate.finishReason === "SAFETY") {
+            throw new Error("Generation blocked by safety settings");
+        }
 
-    const candidate = data.candidates[0];
-    
-    if (candidate.finishReason === "SAFETY") {
-        throw new Error("Generation blocked by safety settings");
-    }
+        if (!candidate.content || !candidate.content.parts || !candidate.content.parts[0]) {
+        throw new Error("No content generated");
+        }
 
-    if (!candidate.content || !candidate.content.parts || !candidate.content.parts[0]) {
-       throw new Error("No content generated");
-    }
+        let resultText = candidate.content.parts[0].text;
+        
+        if (!resultText) {
+            throw new Error("Empty AI response text");
+        }
 
-    let resultText = candidate.content.parts[0].text;
-    
-    if (!resultText) {
-        throw new Error("Empty AI response text");
-    }
+        const firstBrace = resultText.indexOf('{');
+        const lastBrace = resultText.lastIndexOf('}');
 
-    const firstBrace = resultText.indexOf('{');
-    const lastBrace = resultText.lastIndexOf('}');
+        if (firstBrace !== -1 && lastBrace !== -1) {
+        resultText = resultText.substring(firstBrace, lastBrace + 1);
+        } else {
+        resultText = resultText.replace(/```json/g, '').replace(/```/g, '').trim();
+        }
+        
+        if (!resultText.trim()) {
+        throw new Error("No JSON found in response");
+        }
 
-    if (firstBrace !== -1 && lastBrace !== -1) {
-      resultText = resultText.substring(firstBrace, lastBrace + 1);
-    } else {
-      resultText = resultText.replace(/```json/g, '').replace(/```/g, '').trim();
-    }
-    
-    if (!resultText.trim()) {
-       throw new Error("No JSON found in response");
-    }
+        return JSON.parse(resultText);
 
-    try {
-      return JSON.parse(resultText);
-    } catch (e) {
-      console.error("JSON Parse Error. Raw Text:", resultText);
-      throw new Error("Failed to parse AI response.");
+    } finally {
+        clearTimeout(timeoutId);
     }
   };
 
   const runBatchGeneration = async (filesToProcess) => {
-     for (const file of filesToProcess) {
-        try {
-          const jsonResult = await performGeneration(file);
-          const kwArray = jsonResult.keywords.split(',').map(k => k.trim());
-          const analysis = {
-            short: kwArray.filter(k => k.split(' ').length <= 2).length,
-            mid: kwArray.filter(k => k.split(' ').length === 3).length,
-            long: kwArray.filter(k => k.split(' ').length >= 4).length,
-            total: kwArray.length
-          };
-          
-          setFiles(prev => {
-            if (!prev.find(f => f.id === file.id)) return prev;
+     // CHAINING TO MUTEX to ensure one by one processing even across uploads
+     // FIX: Use .catch to ensure queue continues even if one fails completely
+     const nextChain = processingMutex.current.catch(() => {}).then(async () => {
+         for (const file of filesToProcess) {
+            let retries = 1; // CHANGED: Set to 1 to try once and fail fast if error
+            let success = false;
+            let lastError = null;
 
-            return prev.map(f => {
-              if (f.id !== file.id) return f;
-              
-              const predictedCategory = jsonResult.category_id || 8;
-              const finalCategory = useAiCategory ? predictedCategory : 8;
+            // Check if file still exists in state (wasn't reset)
+            // CORRECT FIX: Use filesRef to check existence without stale closure
+            if (!filesRef.current.find(f => f.id === file.id)) continue;
 
-              return { 
-                ...f, 
-                status: 'complete', 
-                metadata: jsonResult,
-                keywordAnalysis: analysis,
-                aiCategoryId: predictedCategory, 
-                categoryId: finalCategory
-              };
-            });
-          });
-          
-          await new Promise(resolve => setTimeout(resolve, 4000));
+            while (retries > 0 && !success) {
+                try {
+                    const jsonResult = await performGeneration(file);
+                    const kwArray = jsonResult.keywords.split(',').map(k => k.trim());
+                    const analysis = {
+                        short: kwArray.filter(k => k.split(' ').length <= 2).length,
+                        mid: kwArray.filter(k => k.split(' ').length === 3).length,
+                        long: kwArray.filter(k => k.split(' ').length >= 4).length,
+                        total: kwArray.length
+                    };
+                    
+                    setFiles(prev => {
+                        // Double check existence
+                        if (!prev.find(f => f.id === file.id)) return prev;
 
-        } catch (error) {
-          console.error(`Error processing ${file.name}:`, error);
-          
-          if (error.message.includes('429') || error.message.includes('Quota')) {
-              await new Promise(resolve => setTimeout(resolve, 10000));
-          }
+                        return prev.map(f => {
+                        if (f.id !== file.id) return f;
+                        
+                        const predictedCategory = jsonResult.category_id || 8;
+                        const finalCategory = useAiCategory ? predictedCategory : 8;
 
-          setFiles(prev => {
-             if (!prev.find(f => f.id === file.id)) return prev;
-             return prev.map(f => f.id === file.id ? { ...f, status: 'error' } : f);
-          });
-        }
-     }
+                        // Apply Filename Logic on Completion
+                        const currentCsvExt = csvExtensionRef.current;
+                        const currentPreserve = preserveExtensionRef.current;
+                        let finalName = f.name;
+
+                        if (!currentPreserve) {
+                            const isVideoFile = f.type === 'video';
+                            const isVideoExt = ['mov', 'mp4', 'mpg'].includes(currentCsvExt);
+                            
+                            // Only rename if compatibility matches (video->video ext, image->image ext)
+                            if (isVideoFile === isVideoExt) {
+                                finalName = f.file.name.replace(/\.[^/.]+$/, "") + "." + currentCsvExt;
+                            } else if (!isVideoFile && !isVideoExt) {
+                                finalName = f.file.name.replace(/\.[^/.]+$/, "") + "." + currentCsvExt;
+                            }
+                        }
+
+                        return { 
+                            ...f, 
+                            status: 'complete', 
+                            metadata: jsonResult,
+                            keywordAnalysis: analysis,
+                            aiCategoryId: predictedCategory, 
+                            categoryId: finalCategory,
+                            name: finalName
+                        };
+                        });
+                    });
+                    
+                    success = true;
+                    // Standard spacing between requests
+                    await new Promise(resolve => setTimeout(resolve, 4000));
+
+                } catch (error) {
+                    console.error(`Error processing ${file.name}:`, error);
+                    lastError = error;
+                    
+                    // Check if taking too long or explicit API error - trigger key check if so
+                    const isTimeout = error.name === 'AbortError' || error.message.includes('timeout');
+                    const isApiError = error.message.includes("API Error") || error.message.includes("Invalid API Key") || error.message.includes("Quota");
+
+                    // Trigger UI changes for API errors immediately
+                    if (isTimeout || isApiError) {
+                         setIsKeyInvalid(true);
+                         setIsKeySaved(false);
+                         setUserApiKey('');
+                    }
+
+                    // CHANGED: Fail immediately on any error. Do not wait or retry.
+                    retries = 0; 
+                }
+            }
+
+            if (!success) {
+                // Determine the display error message
+                let displayError = "Failed to generate metadata.";
+                if (lastError) {
+                    const msg = lastError.message || lastError.toString();
+                    if (msg.includes("API Key") || msg.includes("403") || msg.includes("400") || msg.includes("Invalid") || msg.includes("abort") || msg.includes("Quota") || msg.includes("429") || msg.includes("API Error")) {
+                        displayError = "Check or replace to a new api key. (" + msg + ")";
+                    } else {
+                        displayError = msg;
+                    }
+                }
+
+                setFiles(prev => {
+                    if (!prev.find(f => f.id === file.id)) return prev;
+                    return prev.map(f => f.id === file.id ? { ...f, status: 'error', errorMessage: displayError } : f);
+                });
+            }
+         }
+     });
+
+     processingMutex.current = nextChain;
+     // Return the chain so await runBatchGeneration works
+     return nextChain;
   };
 
   const processUploadedFiles = useCallback(async (uploadedFiles) => {
@@ -618,7 +756,7 @@ const HackyMetaGenApp = () => {
     const currentSession = sessionId.current;
 
     const newFilesPromises = uploadedFiles.map(async (file) => {
-      let fileName = file.name;
+      let fileName = file.name; // Keep original name initially
       const isMov = fileName.toLowerCase().endsWith('.mov');
       const ext = fileName.split('.').pop().toLowerCase();
       
@@ -634,24 +772,6 @@ const HackyMetaGenApp = () => {
         determinedType = 'image';
       }
 
-      if (determinedType === 'image' && !isMov) {
-        if (!preserveExtension) {
-            // Apply current selected image extension, NOT video ones
-            const currentCsvExt = ['mov', 'mp4', 'mpg'].includes(csvExtension) ? 'ai' : csvExtension;
-            fileName = fileName.replace(/\.[^/.]+$/, "") + "." + currentCsvExt;
-        } else {
-            fileName = file.name;
-        }
-      } else if (determinedType === 'video') {
-         if (!preserveExtension) {
-             // If a video extension is selected, use it, otherwise keep default or map appropriately
-             const videoExt = ['mov', 'mp4', 'mpg'].includes(csvExtension) ? csvExtension : 'mov'; 
-             fileName = fileName.replace(/\.[^/.]+$/, "") + "." + videoExt;
-         } else {
-             fileName = file.name;
-         }
-      }
-
       const previewUrl = await generateThumbnail(file);
       const initialStatus = isAutoGenerate ? 'processing' : 'pending';
 
@@ -660,7 +780,7 @@ const HackyMetaGenApp = () => {
         file,
         name: fileName,
         preview: previewUrl,
-        type: determinedType, // Use auto-detected type
+        type: determinedType,
         status: initialStatus,
         categoryId: 8, 
         aiCategoryId: null, 
@@ -688,6 +808,7 @@ const HackyMetaGenApp = () => {
     }
 
     if (isAutoGenerate) {
+        // Trigger generation but don't await it here to not block UI
         runBatchGeneration(newFiles);
     }
 
@@ -754,20 +875,49 @@ const HackyMetaGenApp = () => {
         total: kwArray.length
       };
 
-      setFiles(prev => prev.map(f => 
-        f.id === fileObj.id ? { 
+      setFiles(prev => prev.map(f => {
+        if (f.id !== fileObj.id) return f;
+
+        // Apply Filename Logic on Completion
+        const currentCsvExt = csvExtensionRef.current;
+        const currentPreserve = preserveExtensionRef.current;
+        let finalName = f.name;
+
+        if (!currentPreserve) {
+            const isVideoFile = f.type === 'video';
+            const isVideoExt = ['mov', 'mp4', 'mpg'].includes(currentCsvExt);
+            
+            if (isVideoFile === isVideoExt) {
+                finalName = f.file.name.replace(/\.[^/.]+$/, "") + "." + currentCsvExt;
+            } else if (!isVideoFile && !isVideoExt) {
+                finalName = f.file.name.replace(/\.[^/.]+$/, "") + "." + currentCsvExt;
+            }
+        }
+
+        return { 
           ...f, 
           status: 'complete', 
           metadata: jsonResult,
           keywordAnalysis: analysis,
           aiCategoryId: jsonResult.category_id,
-          categoryId: useAiCategory ? (jsonResult.category_id || 8) : 8
-        } : f
-      ));
+          categoryId: useAiCategory ? (jsonResult.category_id || 8) : 8,
+          name: finalName
+        };
+      }));
 
     } catch (error) {
       console.error("Generation Error:", error);
-      setFiles(prev => prev.map(f => f.id === fileObj.id ? { ...f, status: 'error' } : f));
+      
+      let displayError = error.message || "Unknown error";
+      if (displayError.includes("API Key") || displayError.includes("403") || displayError.includes("400") || displayError.includes("Invalid") || displayError.includes("Quota") || displayError.includes("429") || displayError.includes("API Error")) {
+         displayError = "Check or replace to a new api key. (" + displayError + ")";
+         // --- NEW: Trigger Invalid Key State UI ---
+         setIsKeyInvalid(true);
+         setIsKeySaved(false);
+         setUserApiKey(''); // Clear to show placeholder
+      }
+
+      setFiles(prev => prev.map(f => f.id === fileObj.id ? { ...f, status: 'error', errorMessage: displayError } : f));
     }
   };
 
@@ -796,7 +946,7 @@ const HackyMetaGenApp = () => {
     const csvHeader = "Filename,Title,Keywords,Category\n";
     
     const csvRows = filesToExport.map(f => {
-      if (f.status === 'pending' || f.status === 'processing') return null;
+      if (f.status === 'pending' || f.status === 'processing' || f.status === 'error') return null;
 
       const title = `"${f.metadata.title ? f.metadata.title.replace(/"/g, '""') : ''}"`;
       const keywords = `"${f.metadata.keywords ? f.metadata.keywords.replace(/"/g, '""') : ''}"`;
@@ -978,7 +1128,7 @@ const HackyMetaGenApp = () => {
       {/* 1. HEADER */}
       <header className={`px-6 py-4 flex items-center justify-between border-b ${theme === 'dark' ? 'border-slate-800 bg-slate-900/50' : 'border-slate-200 bg-white'}`}>
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center text-white font-bold text-lg shadow-lg shadow-indigo-500/30">H</div>
+          <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white font-bold text-lg shadow-lg shadow-blue-500/30">H</div>
           <div>
             <h1 className="font-bold text-lg tracking-tight hidden sm:inline">
               <span className={theme === 'dark' ? 'text-white' : 'text-slate-900'}>Hacky</span>{' '}
@@ -1006,7 +1156,7 @@ const HackyMetaGenApp = () => {
           <div className="flex items-center gap-2">
             <input 
               type="text" 
-              placeholder={isKeyInvalid ? "Incorrect Key" : (isKeySaved ? "System Ready" : "Enter Gemini API Key")}
+              placeholder={isKeyInvalid ? "Check Or Replace" : (isKeySaved ? "System Ready" : "Enter Gemini API Key")}
               value={userApiKey}
               onChange={(e) => {
                 setUserApiKey(e.target.value);
@@ -1135,17 +1285,6 @@ const HackyMetaGenApp = () => {
           {/* Upload Area */}
           <div 
             onClick={() => fileInputRef.current.click()}
-            // Added explicit drag handlers to the drop zone for better reliability
-            onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setIsGlobalDragging(true); }}
-            onDrop={(e) => {
-                e.preventDefault(); 
-                e.stopPropagation(); 
-                setIsGlobalDragging(false);
-                dragCounter.current = 0;
-                if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-                    processUploadedFiles(Array.from(e.dataTransfer.files));
-                }
-            }}
             className={`flex-1 min-h-[120px] max-h-[160px] border-2 border-dashed rounded-xl flex flex-col items-center justify-center cursor-pointer transition-all group relative overflow-hidden ${
               theme === 'dark' 
                 ? 'border-slate-700 hover:border-indigo-500 hover:bg-slate-800/50' 
@@ -1226,7 +1365,7 @@ const HackyMetaGenApp = () => {
                     : theme === 'dark' ? 'bg-slate-800 border-slate-700 text-slate-400' : 'bg-white border-slate-300 text-slate-600'
                 }`}
               >
-                Default Filename
+                {preserveExtension ? "Don't Change: ON" : "Default Filename"}
               </button>
               <select
                 value={csvExtension}
@@ -1365,7 +1504,7 @@ const HackyMetaGenApp = () => {
             <div className="h-full flex flex-col">
               <div className="mb-6">
                 <h3 className="text-2xl font-bold">Batch Review</h3>
-                <p className={`text-sm ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>Review metadata for images / videos</p>
+                <p className={`text-sm ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>Review metadata for images</p>
               </div>
               
               <div className="flex-1 lg:overflow-y-auto pr-2 pb-24">
@@ -1450,7 +1589,16 @@ const HackyMetaGenApp = () => {
                           </div>
 
                           {/* Fields */}
-                          <div className="p-4 space-y-4 flex-1">
+                          {file.status === 'error' ? (
+                            <div className={`p-4 flex-1 flex flex-col justify-center items-center text-center ${theme === 'dark' ? 'bg-red-900/10' : 'bg-red-50'}`}>
+                                <AlertCircle size={32} className="text-red-500 mb-2" />
+                                <p className="text-red-500 font-bold text-sm mb-2">Generation Failed Recheck or Replace Your Key To New One</p>
+                                <p className="text-xs text-red-500/80 leading-relaxed px-2">
+                                  {file.errorMessage || "Unknown error occurred"}
+                                </p>
+                            </div>
+                          ) : (
+                            <div className="p-4 space-y-4 flex-1">
                             {/* Title */}
                             <div>
                               <div className="flex justify-between items-center mb-1">
@@ -1538,6 +1686,7 @@ const HackyMetaGenApp = () => {
                               </select>
                             </div>
                           </div>
+                          )}
 
                           {/* Footer & Extension Selection */}
                           <div className={`px-4 py-3 border-t flex flex-col gap-2 ${theme === 'dark' ? 'border-slate-700 text-slate-500' : 'border-slate-100 text-slate-400'}`}>
