@@ -482,69 +482,21 @@ const HackyMetaGenApp = () => {
         }
     }
 
-    const categoriesString = ADOBE_CATEGORIES.map(c => `${c.id}. ${c.name}`).join('\n');
-
-    const systemPrompt = `
-      You are Hacky MetaGen 3.5, a senior SEO expert for Adobe Stock.
-      Your goal is to generate metadata for this ${fileObj.type} to maximize discoverability.
-      ${isVideo ? "Note: The input provided is a sequence of 5 frames extracted from the video to represent the WHOLE video action/story." : ""}
-      
-      STRICT RULES:
-      1. **Title**: 100-125 characters. Natural, readable, descriptive. Include high-value keywords. NO keyword stuffing.
-      
-      2. **Keywords**: Generate EXACTLY 49 keywords. Comma-separated string.
-         - **CRITICAL:** Do NOT generate more than 49 keywords. Stop exactly at 49.
-         
-         **ADOBE STOCK RANKING OPTIMIZATION (CRITICAL):**
-         - **The first 5-10 keywords MUST be the most impactful, highly relevant, and descriptive terms.** This primarily determines search ranking.
-         - Start with the absolute main subject, core concept, and primary visual elements.
-         - Do NOT start with generic terms (like "vector", "illustration", "background") unless they are the primary intent.
-         
-         **DISTRIBUTION REQUIREMENTS (After the top 10 prioritized keywords):**
-         - **Short-tail (1-2 words)**: ~12-13 keywords (25-30%)
-         - **Mid-tail (2-3 words)**: ~21-22 keywords (40-45%)
-         - **Long-tail (4+ words)**: ~15 keywords (30%)
-         
-         **CONTENT RULES:**
-         - NO brand names, trademarks, or personal names.
-         - Describe the subject, style, mood, lighting, and concept.
-
-      3. **Category**: Choose the single most appropriate category ID (1-21) from the list below:
-      ${categoriesString}
-      
-      OUTPUT FORMAT (JSON ONLY):
-      {
-        "title": "string",
-        "keywords": "string (comma separated)",
-        "category_id": integer
-      }
-    `;
-
-    const contentParts = [{ text: systemPrompt }];
-    
-    if (isVideo && Array.isArray(base64Data)) {
-      base64Data.forEach(frameData => {
-        contentParts.push({ inlineData: { mimeType: mimeType, data: frameData } });
-      });
-    } else {
-      contentParts.push({ inlineData: { mimeType: mimeType, data: base64Data } });
-    }
-
     // ADDED: AbortController for timeout
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 60000); // 60s timeout per request
 
     try {
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${activeKey}`, {
+        // CHANGED: Point to local backend instead of Gemini directly
+        const response = await fetch('http://localhost:3001/api/generate', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                contents: [{
-                parts: contentParts
-                }],
-                generationConfig: {
-                responseMimeType: "application/json"
-                }
+                apiKey: activeKey,
+                mimeType: mimeType,
+                data: base64Data, // Single string or array
+                fileType: fileObj.type,
+                isVideo: isVideo
             }),
             signal: controller.signal
         });
@@ -553,8 +505,8 @@ const HackyMetaGenApp = () => {
             let errorMsg = `API Error: ${response.status} ${response.statusText}`;
             try {
                 const errorData = await response.json();
-                if (errorData.error && errorData.error.message) {
-                    errorMsg = `API Error: ${errorData.error.message}`;
+                if (errorData.error) {
+                    errorMsg = `API Error: ${errorData.error}`;
                 }
             } catch (e) {}
             throw new Error(errorMsg);
@@ -567,10 +519,10 @@ const HackyMetaGenApp = () => {
             throw new Error("Invalid JSON response from API");
         }
 
-        if (data.error) throw new Error(data.error.message);
+        if (data.error) throw new Error(data.error);
         
         if (!data.candidates || !data.candidates[0]) {
-        throw new Error("No candidates returned from AI");
+           throw new Error("No candidates returned from AI");
         }
 
         const candidate = data.candidates[0];
@@ -580,7 +532,7 @@ const HackyMetaGenApp = () => {
         }
 
         if (!candidate.content || !candidate.content.parts || !candidate.content.parts[0]) {
-        throw new Error("No content generated");
+           throw new Error("No content generated");
         }
 
         let resultText = candidate.content.parts[0].text;
@@ -608,19 +560,16 @@ const HackyMetaGenApp = () => {
         if (parsedResult.keywords && typeof parsedResult.keywords === 'string') {
           let kws = parsedResult.keywords.split(',').map(k => k.trim()).filter(k => k.length > 0);
           
-          // If we have more than 49, trim the excess from the end
           if (kws.length > 49) {
               kws = kws.slice(0, 49);
           }
           
-          // Reconstruct the string
           parsedResult.keywords = kws.join(', ');
         }
 
         return parsedResult;
 
     } catch (e) {
-        // Re-throw to be caught by caller
         throw e;
     } finally {
         clearTimeout(timeoutId);
