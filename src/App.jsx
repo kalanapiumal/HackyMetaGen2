@@ -271,6 +271,7 @@ const HackyMetaGenApp = () => {
         };
 
         video.onerror = () => {
+          clearTimeout(videoTimeout);
           URL.revokeObjectURL(video.src);
           resolve(null);
         };
@@ -492,6 +493,7 @@ const HackyMetaGenApp = () => {
       1. **Title**: 100-125 characters. Natural, readable, descriptive. Include high-value keywords. NO keyword stuffing.
       
       2. **Keywords**: Generate EXACTLY 49 keywords. Comma-separated string.
+         - **CRITICAL:** Do NOT generate more than 49 keywords. Stop exactly at 49.
          
          **ADOBE STOCK RANKING OPTIMIZATION (CRITICAL):**
          - **The first 5-10 keywords MUST be the most impactful, highly relevant, and descriptive terms.** This primarily determines search ranking.
@@ -600,8 +602,26 @@ const HackyMetaGenApp = () => {
         throw new Error("No JSON found in response");
         }
 
-        return JSON.parse(resultText);
+        const parsedResult = JSON.parse(resultText);
 
+        // STRICTLY ENFORCE 49 KEYWORDS
+        if (parsedResult.keywords && typeof parsedResult.keywords === 'string') {
+          let kws = parsedResult.keywords.split(',').map(k => k.trim()).filter(k => k.length > 0);
+          
+          // If we have more than 49, trim the excess from the end
+          if (kws.length > 49) {
+              kws = kws.slice(0, 49);
+          }
+          
+          // Reconstruct the string
+          parsedResult.keywords = kws.join(', ');
+        }
+
+        return parsedResult;
+
+    } catch (e) {
+        // Re-throw to be caught by caller
+        throw e;
     } finally {
         clearTimeout(timeoutId);
     }
