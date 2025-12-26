@@ -94,6 +94,16 @@ const HackyMetaGenApp = () => {
     return saved !== null ? JSON.parse(saved) : false;
   });
 
+  // API Key Handling
+  const [userApiKey, setUserApiKey] = useState(''); 
+  const [isKeySaved, setIsKeySaved] = useState(false); 
+  const [isKeyInvalid, setIsKeyInvalid] = useState(false); 
+  const [showSuccessMessage, setShowSuccessMessage] = useState(false); 
+  const [showErrorMessage, setShowErrorMessage] = useState(false); 
+  const [showTutorial, setShowTutorial] = useState(false); 
+  const [isVerifying, setIsVerifying] = useState(false); 
+  const envApiKey = ""; // The execution environment provides the key at runtime
+
   // Drag and Drop Global State
   const [isGlobalDragging, setIsGlobalDragging] = useState(false);
   const dragCounter = useRef(0);
@@ -111,8 +121,32 @@ const HackyMetaGenApp = () => {
   const features = [
     "Video Metadata Support",
     "CSV FileName Extension Selection Support",
-    <span key="approval">AI Approval Result Prediction <span className="mx-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-500/20 text-blue-400 border border-blue-500/30 align-middle">Beta 0.5</span> Added</span>
+    // Use an object here or ensure the span is valid JSX if rendered directly, 
+    // but string array is safer for simple rotation logic.
+    // For complex JSX in array, ensure it's handled in the render.
+    "AI Approval Result Prediction Beta 0.5 Added" 
   ];
+  
+  const fileInputRef = useRef(null);
+
+  // --- Refs for Async Access ---
+  const csvExtensionRef = useRef(csvExtension);
+  const preserveExtensionRef = useRef(preserveExtension);
+  const filesRef = useRef(files); // Ref to track files in async loops
+
+  // --- Effects ---
+
+  // Update Refs
+  useEffect(() => { csvExtensionRef.current = csvExtension; }, [csvExtension]);
+  useEffect(() => { preserveExtensionRef.current = preserveExtension; }, [preserveExtension]);
+  useEffect(() => { filesRef.current = files; }, [files]);
+
+  // Persistence Effects for Buttons
+  useEffect(() => { localStorage.setItem('hackymetagen_theme', theme); }, [theme]);
+  useEffect(() => { localStorage.setItem('hackymetagen_auto_generate', JSON.stringify(isAutoGenerate)); }, [isAutoGenerate]);
+  useEffect(() => { localStorage.setItem('hackymetagen_use_ai_category', JSON.stringify(useAiCategory)); }, [useAiCategory]);
+  useEffect(() => { localStorage.setItem('hackymetagen_csv_extension', csvExtension); }, [csvExtension]);
+  useEffect(() => { localStorage.setItem('hackymetagen_preserve_extension', JSON.stringify(preserveExtension)); }, [preserveExtension]);
 
   // Feature Badge Animation Loop
   useEffect(() => {
@@ -232,14 +266,19 @@ const HackyMetaGenApp = () => {
         };
 
         video.onseeked = () => {
-          const canvas = document.createElement('canvas');
-          canvas.width = video.videoWidth;
-          canvas.height = video.videoHeight;
-          const ctx = canvas.getContext('2d');
-          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-          const dataUrl = canvas.toDataURL('image/jpeg');
-          URL.revokeObjectURL(video.src);
-          resolve(dataUrl);
+          clearTimeout(videoTimeout);
+          try {
+            const canvas = document.createElement('canvas');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            const dataUrl = canvas.toDataURL('image/jpeg');
+            URL.revokeObjectURL(video.src);
+            resolve(dataUrl);
+          } catch(e) {
+             resolve(null);
+          }
         };
 
         video.onerror = () => {
@@ -1105,7 +1144,7 @@ const HackyMetaGenApp = () => {
             <h1 className="font-bold text-lg tracking-tight hidden sm:inline">
               <span className={theme === 'dark' ? 'text-white' : 'text-slate-900'}>Hacky</span>{' '}
               <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400">MetaGen</span>
-              <span className="text-xs align-top bg-indigo-500/20 text-indigo-500 px-1.5 py-0.5 rounded ml-1">3.6</span>
+              <span className="text-xs align-top bg-indigo-500/20 text-indigo-500 px-1.5 py-0.5 rounded ml-1">3.5</span>
             </h1>
           </div>
         </div>
