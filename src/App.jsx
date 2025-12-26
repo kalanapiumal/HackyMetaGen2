@@ -1144,7 +1144,7 @@ const HackyMetaGenApp = () => {
             <h1 className="font-bold text-lg tracking-tight hidden sm:inline">
               <span className={theme === 'dark' ? 'text-white' : 'text-slate-900'}>Hacky</span>{' '}
               <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400">MetaGen</span>
-              <span className="text-xs align-top bg-indigo-500/20 text-indigo-500 px-1.5 py-0.5 rounded ml-1">3.5</span>
+              <span className="text-xs align-top bg-indigo-500/20 text-indigo-500 px-1.5 py-0.5 rounded ml-1">3.6</span>
             </h1>
           </div>
         </div>
