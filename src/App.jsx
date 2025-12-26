@@ -22,7 +22,9 @@ import {
   Zap,
   ZapOff,
   Plus,
-  Brain 
+  Brain,
+  ShieldCheck,
+  ShieldAlert
 } from 'lucide-react';
 
 /**
@@ -108,39 +110,9 @@ const HackyMetaGenApp = () => {
   
   const features = [
     "Video Metadata Support",
-    "CSV FileName Extension Selection Support"
+    "CSV FileName Extension Selection Support",
+    <span key="approval">AI Approval Result Prediction <span className="mx-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-500/20 text-blue-400 border border-blue-500/30 align-middle">Beta 0.5</span> Added</span>
   ];
-  
-  // API Key Handling
-  const [userApiKey, setUserApiKey] = useState(''); 
-  const [isKeySaved, setIsKeySaved] = useState(false); 
-  const [isKeyInvalid, setIsKeyInvalid] = useState(false); 
-  const [showSuccessMessage, setShowSuccessMessage] = useState(false); 
-  const [showErrorMessage, setShowErrorMessage] = useState(false); 
-  const [showTutorial, setShowTutorial] = useState(false); 
-  const [isVerifying, setIsVerifying] = useState(false); 
-  const envApiKey = ""; // The execution environment provides the key at runtime
-  
-  const fileInputRef = useRef(null);
-
-  // --- Refs for Async Access ---
-  const csvExtensionRef = useRef(csvExtension);
-  const preserveExtensionRef = useRef(preserveExtension);
-  const filesRef = useRef(files); // Ref to track files in async loops
-
-  // --- Effects ---
-
-  // Update Refs
-  useEffect(() => { csvExtensionRef.current = csvExtension; }, [csvExtension]);
-  useEffect(() => { preserveExtensionRef.current = preserveExtension; }, [preserveExtension]);
-  useEffect(() => { filesRef.current = files; }, [files]);
-
-  // Persistence Effects for Buttons
-  useEffect(() => { localStorage.setItem('hackymetagen_theme', theme); }, [theme]);
-  useEffect(() => { localStorage.setItem('hackymetagen_auto_generate', JSON.stringify(isAutoGenerate)); }, [isAutoGenerate]);
-  useEffect(() => { localStorage.setItem('hackymetagen_use_ai_category', JSON.stringify(useAiCategory)); }, [useAiCategory]);
-  useEffect(() => { localStorage.setItem('hackymetagen_csv_extension', csvExtension); }, [csvExtension]);
-  useEffect(() => { localStorage.setItem('hackymetagen_preserve_extension', JSON.stringify(preserveExtension)); }, [preserveExtension]);
 
   // Feature Badge Animation Loop
   useEffect(() => {
@@ -260,19 +232,14 @@ const HackyMetaGenApp = () => {
         };
 
         video.onseeked = () => {
-          clearTimeout(videoTimeout);
-          try {
-            const canvas = document.createElement('canvas');
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            const ctx = canvas.getContext('2d');
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            const dataUrl = canvas.toDataURL('image/jpeg');
-            URL.revokeObjectURL(video.src);
-            resolve(dataUrl);
-          } catch(e) {
-             resolve(null);
-          }
+          const canvas = document.createElement('canvas');
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          const dataUrl = canvas.toDataURL('image/jpeg');
+          URL.revokeObjectURL(video.src);
+          resolve(dataUrl);
         };
 
         video.onerror = () => {
@@ -487,24 +454,76 @@ const HackyMetaGenApp = () => {
         }
     }
 
+    const categoriesString = ADOBE_CATEGORIES.map(c => `${c.id}. ${c.name}`).join('\n');
+
+    const systemPrompt = `
+      You are Hacky MetaGen 3.5, a senior SEO expert for Adobe Stock.
+      Your goal is to generate metadata for this ${fileObj.type} to maximize discoverability.
+      ${isVideo ? "Note: The input provided is a sequence of 5 frames extracted from the video to represent the WHOLE video action/story." : ""}
+      
+      STRICT RULES:
+      1. **Title**: 100-125 characters. Natural, readable, descriptive. Include high-value keywords. NO keyword stuffing.
+      
+      2. **Keywords**: Generate EXACTLY 49 keywords. Comma-separated string.
+         - **CRITICAL:** Do NOT generate more than 49 keywords. Stop exactly at 49.
+         
+         **ADOBE STOCK RANKING OPTIMIZATION (CRITICAL):**
+         - **The first 5-10 keywords MUST be the most impactful, highly relevant, and descriptive terms.** This primarily determines search ranking.
+         - Start with the absolute main subject, core concept, and primary visual elements.
+         - Do NOT start with generic terms (like "vector", "illustration", "background") unless they are the primary intent.
+         
+         **DISTRIBUTION REQUIREMENTS (After the top 10 prioritized keywords):**
+         - **Short-tail (1-2 words)**: ~12-13 keywords (25-30%)
+         - **Mid-tail (2-3 words)**: ~21-22 keywords (40-45%)
+         - **Long-tail (4+ words)**: ~15 keywords (30%)
+         
+         **CONTENT RULES:**
+         - NO brand names, trademarks, or personal names.
+         - Describe the subject, style, mood, lighting, and concept.
+
+      3. **Category**: Choose the single most appropriate category ID (1-21) from the list below:
+      ${categoriesString}
+
+      4. **Approval Prediction**: Act as a strict Adobe Stock reviewer. Analyze the image for technical issues (artifacts, noise, blur, over-filtering, trademarks/logos), and Composition.
+         - Status: "Accepted" or "Rejected".
+         - Reason: If rejected, give a very short reason (e.g., "Artifacts present", "Visible Logo", "Poor Focus"). If accepted, leave empty or "Good quality".
+      
+      OUTPUT FORMAT (JSON ONLY):
+      {
+        "title": "string",
+        "keywords": "string (comma separated)",
+        "category_id": integer,
+        "approval_status": "Accepted" or "Rejected",
+        "approval_reason": "string"
+      }
+    `;
+
+    const contentParts = [{ text: systemPrompt }];
+    
+    if (isVideo && Array.isArray(base64Data)) {
+      base64Data.forEach(frameData => {
+        contentParts.push({ inlineData: { mimeType: mimeType, data: frameData } });
+      });
+    } else {
+      contentParts.push({ inlineData: { mimeType: mimeType, data: base64Data } });
+    }
+
     // ADDED: AbortController for timeout
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 60000); // 60s timeout per request
 
     try {
-        // Prepare payload (simplified for backend call)
-        const payload = {
-            apiKey: activeKey,
-            mimeType: mimeType,
-            data: base64Data, // Single string or array
-            fileType: fileObj.type,
-            isVideo: isVideo
-        };
-
-        const response = await fetch('/api/generate', {
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${activeKey}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
+            body: JSON.stringify({
+                contents: [{
+                parts: contentParts
+                }],
+                generationConfig: {
+                responseMimeType: "application/json"
+                }
+            }),
             signal: controller.signal
         });
 
@@ -512,8 +531,8 @@ const HackyMetaGenApp = () => {
             let errorMsg = `API Error: ${response.status} ${response.statusText}`;
             try {
                 const errorData = await response.json();
-                if (errorData.error) {
-                    errorMsg = `API Error: ${errorData.error}`;
+                if (errorData.error && errorData.error.message) {
+                    errorMsg = `API Error: ${errorData.error.message}`;
                 }
             } catch (e) {}
             throw new Error(errorMsg);
@@ -526,12 +545,10 @@ const HackyMetaGenApp = () => {
             throw new Error("Invalid JSON response from API");
         }
 
-        // Check if backend returned an error structure
-        if (data.error) throw new Error(data.error);
+        if (data.error) throw new Error(data.error.message);
         
-        // Parse the Gemini response structure
         if (!data.candidates || !data.candidates[0]) {
-           throw new Error("No candidates returned from AI");
+        throw new Error("No candidates returned from AI");
         }
 
         const candidate = data.candidates[0];
@@ -541,7 +558,7 @@ const HackyMetaGenApp = () => {
         }
 
         if (!candidate.content || !candidate.content.parts || !candidate.content.parts[0]) {
-           throw new Error("No content generated");
+        throw new Error("No content generated");
         }
 
         let resultText = candidate.content.parts[0].text;
@@ -554,13 +571,13 @@ const HackyMetaGenApp = () => {
         const lastBrace = resultText.lastIndexOf('}');
 
         if (firstBrace !== -1 && lastBrace !== -1) {
-          resultText = resultText.substring(firstBrace, lastBrace + 1);
+        resultText = resultText.substring(firstBrace, lastBrace + 1);
         } else {
-          resultText = resultText.replace(/```json/g, '').replace(/```/g, '').trim();
+        resultText = resultText.replace(/```json/g, '').replace(/```/g, '').trim();
         }
         
         if (!resultText.trim()) {
-           throw new Error("No JSON found in response");
+        throw new Error("No JSON found in response");
         }
 
         const parsedResult = JSON.parse(resultText);
@@ -579,6 +596,7 @@ const HackyMetaGenApp = () => {
         return parsedResult;
 
     } catch (e) {
+        // Re-throw to be caught by caller
         throw e;
     } finally {
         clearTimeout(timeoutId);
@@ -1087,7 +1105,7 @@ const HackyMetaGenApp = () => {
             <h1 className="font-bold text-lg tracking-tight hidden sm:inline">
               <span className={theme === 'dark' ? 'text-white' : 'text-slate-900'}>Hacky</span>{' '}
               <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400">MetaGen</span>
-              <span className="text-xs align-top bg-indigo-500/20 text-indigo-500 px-1.5 py-0.5 rounded ml-1">3.5</span>
+              <span className="text-xs align-top bg-indigo-500/20 text-indigo-500 px-1.5 py-0.5 rounded ml-1">3.6</span>
             </h1>
           </div>
         </div>
@@ -1458,7 +1476,7 @@ const HackyMetaGenApp = () => {
             <div className="h-full flex flex-col">
               <div className="mb-6">
                 <h3 className="text-2xl font-bold">Multi-File Review</h3>
-                <p className={`text-sm ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>Review Metadata</p>
+                <p className={`text-sm ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>Review your metadata here</p>
               </div>
               
               <div className="flex-1 lg:overflow-y-auto pr-2 pb-24">
@@ -1643,6 +1661,34 @@ const HackyMetaGenApp = () => {
                                   </option>
                                 ))}
                               </select>
+                            </div>
+
+                            {/* AI Approval Prediction */}
+                            <div className="mt-3 pt-3 border-t border-slate-100/10">
+                                <label className={`text-[10px] font-bold uppercase tracking-wider mb-1 block ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>
+                                    AI Approval Result Prediction <span className="text-[9px] bg-indigo-500/20 text-indigo-400 px-1 rounded ml-1">Beta 0.5</span>
+                                </label>
+                                {file.status === 'complete' ? (
+                                    <div className="flex flex-col gap-1">
+                                        <div className="flex items-center gap-2">
+                                            {file.metadata.approval_status === 'Accepted' ? (
+                                                <ShieldCheck size={14} className="text-green-500" />
+                                            ) : (
+                                                <ShieldAlert size={14} className="text-red-500" />
+                                            )}
+                                            <span className={`text-xs font-bold ${file.metadata.approval_status === 'Rejected' ? 'text-red-500' : 'text-green-500'}`}>
+                                                {file.metadata.approval_status === 'Rejected' ? 'Likely to be Rejected' : 'Likely to be Accepted'}
+                                            </span>
+                                        </div>
+                                        {file.metadata.approval_status === 'Rejected' && (
+                                            <p className="text-[10px] text-slate-500 italic pl-5">
+                                                Reason: {file.metadata.approval_reason}
+                                            </p>
+                                        )}
+                                    </div>
+                                ) : (
+                                    <div className="h-4 bg-slate-700/10 rounded animate-pulse w-1/2"></div>
+                                )}
                             </div>
                           </div>
                           )}
