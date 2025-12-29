@@ -28,7 +28,7 @@ import {
 } from 'lucide-react';
 
 /**
- * Hacky MetaGen 3.5 - Adobe Stock Metadata Generator
+ * Hacky MetaGen 3.6 - Adobe Stock Metadata Generator
  * Built with React + Tailwind CSS + Gemini API
  */
 
@@ -90,7 +90,7 @@ const HackyMetaGenApp = () => {
     return saved !== null ? JSON.parse(saved) : false;
   });
 
-  // API Key State (Moved up to prevent ReferenceError)
+  // API Key State
   const [userApiKey, setUserApiKey] = useState(''); 
   const [isKeySaved, setIsKeySaved] = useState(false); 
   const [isKeyInvalid, setIsKeyInvalid] = useState(false); 
@@ -110,14 +110,17 @@ const HackyMetaGenApp = () => {
   const dragCounter = useRef(0);
   const sessionId = useRef(0);
   const processingMutex = useRef(Promise.resolve());
+  
+  // Refs for async access
   const csvExtensionRef = useRef(csvExtension);
   const preserveExtensionRef = useRef(preserveExtension);
   const filesRef = useRef(files); 
+  const apiKeyRef = useRef(userApiKey); // NEW: Track API key in ref
 
   const features = [
-    "Video Metadata Support",
-    "CSV FileName Extension Selection Support",
-    <span key="approval">AI Approval Result Prediction <span className="mx-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-500/20 text-blue-400 border border-blue-500/30 align-middle">Beta 0.5</span> Added</span>
+    <span key="f1">Video Metadata Support</span>,
+    <span key="f2">CSV FileName Extension Selection Support</span>,
+    <span key="f3">NEW FEATURE : AI Approval Result Prediction <span className="mx-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-500/20 text-blue-400 border border-blue-500/30 align-middle">Beta 0.5</span> Added</span>
   ];
 
   // 2. Effects
@@ -131,12 +134,15 @@ const HackyMetaGenApp = () => {
   useEffect(() => { csvExtensionRef.current = csvExtension; }, [csvExtension]);
   useEffect(() => { preserveExtensionRef.current = preserveExtension; }, [preserveExtension]);
   useEffect(() => { filesRef.current = files; }, [files]);
+  useEffect(() => { apiKeyRef.current = userApiKey; }, [userApiKey]);
 
   // Load API Key
   useEffect(() => {
     const savedKey = localStorage.getItem('hackymetagen_api_key');
     if (savedKey) {
       setIsKeySaved(true);
+      setUserApiKey(savedKey); // Set state too so ref updates
+      apiKeyRef.current = savedKey;
     }
   }, []);
 
@@ -180,13 +186,13 @@ const HackyMetaGenApp = () => {
         localStorage.setItem('hackymetagen_api_key', keyToTest);
         setIsKeySaved(true);
         setIsKeyInvalid(false);
-        setUserApiKey(''); 
+        // Don't clear input, keep it for user to see
         setShowSuccessMessage(true);
         setTimeout(() => setShowSuccessMessage(false), 5000);
     } else {
         setIsKeyInvalid(true);
         setIsKeySaved(false);
-        setUserApiKey(''); 
+        setUserApiKey(''); // Clear on fail
         setShowErrorMessage(true);
         setTimeout(() => setShowErrorMessage(false), 5000);
     }
@@ -386,11 +392,8 @@ const HackyMetaGenApp = () => {
 
   // --- API Interaction ---
   const performGeneration = async (fileObj) => {
-    // IMPORTANT: Access state via refs/closures or directly if in scope
-    // Here we need to grab the key from local storage or state.
-    // Since this is inside the component, userApiKey is available.
-    // However, for consistency in async, prefer getting from storage if userApiKey is empty in closure
-    const activeKey = userApiKey || localStorage.getItem('hackymetagen_api_key') || envApiKey;
+    // Access key via Ref to ensure it's fresh even if closures are stale
+    const activeKey = apiKeyRef.current || localStorage.getItem('hackymetagen_api_key') || envApiKey;
     
     let mimeType = '';
     let base64Data = null;
@@ -435,7 +438,7 @@ const HackyMetaGenApp = () => {
 
     const categoriesString = ADOBE_CATEGORIES.map(c => `${c.id}. ${c.name}`).join('\n');
     const systemPrompt = `
-      You are Hacky MetaGen 3.5, a senior SEO expert for Adobe Stock.
+      You are Hacky MetaGen 3.6, a senior SEO expert for Adobe Stock.
       Your goal is to generate metadata for this ${fileObj.type} to maximize discoverability.
       ${isVideo ? "Note: The input provided is a sequence of 5 frames extracted from the video to represent the WHOLE video action/story." : ""}
       STRICT RULES:
@@ -552,7 +555,6 @@ const HackyMetaGenApp = () => {
   };
 
   const runBatchGeneration = async (filesToProcess) => {
-     // Ensure we chain processes so they don't overlap if called rapidly
      const nextChain = processingMutex.current.catch(() => {}).then(async () => {
          for (const file of filesToProcess) {
             let retries = 1; 
@@ -575,6 +577,7 @@ const HackyMetaGenApp = () => {
                     
                     setFiles(prev => {
                         if (!prev.find(f => f.id === file.id)) return prev;
+
                         return prev.map(f => {
                             if (f.id !== file.id) return f;
                             
@@ -607,7 +610,6 @@ const HackyMetaGenApp = () => {
                     });
                     
                     success = true;
-                    // Minimal delay
                     await new Promise(resolve => setTimeout(resolve, 1000));
 
                 } catch (error) {
@@ -626,8 +628,9 @@ const HackyMetaGenApp = () => {
 
             if (!success) {
                 let displayError = "Failed to generate metadata.";
+                // Safely handle error message conversion
                 if (lastError) {
-                    const msg = lastError.message || lastError.toString();
+                    const msg = typeof lastError === 'string' ? lastError : (lastError.message || JSON.stringify(lastError));
                     if (msg.includes("API Key") || msg.includes("403") || msg.includes("400") || msg.includes("Invalid") || msg.includes("abort") || msg.includes("Quota") || msg.includes("429")) {
                         displayError = "Check or replace to a new api key. (" + msg + ")";
                     } else {
@@ -648,7 +651,8 @@ const HackyMetaGenApp = () => {
   };
 
   const processUploadedFiles = useCallback(async (uploadedFiles) => {
-    const activeKey = userApiKey || localStorage.getItem('hackymetagen_api_key') || envApiKey;
+    // Access key via Ref to prevent stale closure issues in callback
+    const activeKey = apiKeyRef.current || localStorage.getItem('hackymetagen_api_key') || envApiKey;
     if (!activeKey) {
       setShowTutorial(true);
       if (fileInputRef.current) {
@@ -660,7 +664,7 @@ const HackyMetaGenApp = () => {
     const currentSession = sessionId.current;
 
     const newFilesPromises = uploadedFiles.map(async (file) => {
-      let fileName = file.name;
+      let fileName = file.name; 
       const isMov = fileName.toLowerCase().endsWith('.mov');
       const ext = fileName.split('.').pop().toLowerCase();
       
@@ -712,7 +716,7 @@ const HackyMetaGenApp = () => {
         runBatchGeneration(newFiles);
     }
 
-  }, [contentType, files.length, selectedFileId, isAutoGenerate, useAiCategory, preserveExtension, csvExtension, userApiKey]);
+  }, [contentType, files.length, selectedFileId, isAutoGenerate, useAiCategory, preserveExtension, csvExtension, userApiKey]); // Dependencies still useful for React, but internal logic uses refs
 
   // --- Handlers ---
   const handleFileUpload = (e) => {
@@ -1004,7 +1008,7 @@ const HackyMetaGenApp = () => {
             <h1 className="font-bold text-lg tracking-tight hidden sm:inline">
               <span className={theme === 'dark' ? 'text-white' : 'text-slate-900'}>Hacky</span>{' '}
               <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400">MetaGen</span>
-              <span className="text-xs align-top bg-indigo-500/20 text-indigo-500 px-1.5 py-0.5 rounded ml-1">3.5</span>
+              <span className="text-xs align-top bg-indigo-500/20 text-indigo-500 px-1.5 py-0.5 rounded ml-1">3.6</span>
             </h1>
           </div>
         </div>
@@ -1031,8 +1035,8 @@ const HackyMetaGenApp = () => {
               value={userApiKey}
               onChange={(e) => {
                 setUserApiKey(e.target.value);
-                setIsKeySaved(false); 
-                setIsKeyInvalid(false); 
+                setIsKeySaved(false); // Reset saved state on edit
+                setIsKeyInvalid(false); // Reset invalid state on edit
               }}
               className={`text-xs px-3 py-2 rounded-lg border transition-all w-20 focus:w-48 sm:w-32 sm:focus:w-64 ${
                 isKeyInvalid 
@@ -1105,12 +1109,13 @@ const HackyMetaGenApp = () => {
           </p>
         </div>
       ) : (
-         /* CONDITIONAL HERO */
+         /* CONDITIONAL HERO: Shows progress on the Title when files exist */
          <div className="max-w-7xl mx-auto mt-8 px-4 mb-6">
             <h2 className="text-3xl font-extrabold tracking-tight">
               <span 
                 className="bg-clip-text text-transparent transition-all duration-700 ease-out"
                 style={{
+                  // Updated color to #16a34a (Tailwind green-600) to match Auto Generate button
                   backgroundImage: `linear-gradient(to right, #16a34a ${
                     files.length > 0 ? (completeFiles.length / files.length) * 100 : 0
                   }%, ${theme === 'dark' ? '#ffffff' : '#0f172a'} ${
@@ -1168,6 +1173,7 @@ const HackyMetaGenApp = () => {
             <input 
               type="file" 
               multiple 
+              // Dynamically set accept attribute based on content type
               accept={contentType === 'video' ? "video/*,.mov,.mp4" : contentType === 'vector' ? ".ai,.eps,.svg" : "image/*,.jpg,.png"}
               className="hidden" 
               ref={fileInputRef}
@@ -1305,7 +1311,7 @@ const HackyMetaGenApp = () => {
                     )}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate">{file.name}</p> 
+                    <p className="text-sm font-medium truncate">{file.name}</p> {/* Updated to use file.name */}
                     <div className="flex items-center gap-2 mt-1">
                       <span className={`text-[10px] px-1.5 py-0.5 rounded border ${
                         file.status === 'complete' ? 'border-green-500/30 text-green-400' :
