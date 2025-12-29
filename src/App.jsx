@@ -115,7 +115,7 @@ const HackyMetaGenApp = () => {
   const csvExtensionRef = useRef(csvExtension);
   const preserveExtensionRef = useRef(preserveExtension);
   const filesRef = useRef(files); 
-  const apiKeyRef = useRef(userApiKey); // NEW: Track API key in ref
+  const apiKeyRef = useRef(userApiKey); 
 
   const features = [
     <span key="f1">Video Metadata Support</span>,
@@ -141,7 +141,7 @@ const HackyMetaGenApp = () => {
     const savedKey = localStorage.getItem('hackymetagen_api_key');
     if (savedKey) {
       setIsKeySaved(true);
-      setUserApiKey(savedKey); // Set state too so ref updates
+      setUserApiKey(savedKey); 
       apiKeyRef.current = savedKey;
     }
   }, []);
@@ -216,7 +216,6 @@ const HackyMetaGenApp = () => {
 
   const generateThumbnail = async (file) => {
     const isVideo = file.type.startsWith('video/') || /\.(mov|mp4|avi|webm|mkv|mpg|mpeg)$/i.test(file.name);
-    
     if (isVideo) {
       return new Promise((resolve) => {
         const video = document.createElement('video');
@@ -226,14 +225,9 @@ const HackyMetaGenApp = () => {
         video.playsInline = true;
         video.currentTime = 1;
 
-        const videoTimeout = setTimeout(() => {
-             resolve(null);
-        }, 5000); 
+        const videoTimeout = setTimeout(() => resolve(null), 5000);
 
-        video.onloadeddata = () => {
-          if (video.duration < 1) video.currentTime = 0;
-        };
-
+        video.onloadeddata = () => { if (video.duration < 1) video.currentTime = 0; };
         video.onseeked = () => {
           clearTimeout(videoTimeout);
           try {
@@ -245,11 +239,8 @@ const HackyMetaGenApp = () => {
             const dataUrl = canvas.toDataURL('image/jpeg');
             URL.revokeObjectURL(video.src);
             resolve(dataUrl);
-          } catch(e) {
-             resolve(null);
-          }
+          } catch(e) { resolve(null); }
         };
-
         video.onerror = () => {
           clearTimeout(videoTimeout);
           URL.revokeObjectURL(video.src);
@@ -339,7 +330,7 @@ const HackyMetaGenApp = () => {
       video.muted = true;
       video.playsInline = true;
       video.crossOrigin = "anonymous";
-      
+
       const frames = [];
       let currentFrame = 0;
 
@@ -350,7 +341,6 @@ const HackyMetaGenApp = () => {
       video.onloadedmetadata = () => {
         const duration = video.duration;
         const step = duration / frameCount;
-        
         const captureFrame = () => {
           if (currentFrame >= frameCount) {
             clearTimeout(videoTimeout);
@@ -358,11 +348,9 @@ const HackyMetaGenApp = () => {
             resolve(frames);
             return;
           }
-
           const time = (step * currentFrame) + (step / 2);
           video.currentTime = Math.min(time, duration - 0.1); 
         };
-
         video.onseeked = () => {
           let width = video.videoWidth;
           let height = video.videoHeight;
@@ -381,7 +369,6 @@ const HackyMetaGenApp = () => {
         };
         captureFrame();
       };
-
       video.onerror = () => {
         clearTimeout(videoTimeout);
         URL.revokeObjectURL(url);
@@ -392,14 +379,13 @@ const HackyMetaGenApp = () => {
 
   // --- API Interaction ---
   const performGeneration = async (fileObj) => {
-    // Access key via Ref to ensure it's fresh even if closures are stale
     const activeKey = apiKeyRef.current || localStorage.getItem('hackymetagen_api_key') || envApiKey;
     
     let mimeType = '';
     let base64Data = null;
     const ext = fileObj.file.name.split('.').pop().toLowerCase();
     
-    const isVideo = fileObj.file.type.startsWith('video/') || ['mov', 'mp4', 'avi', 'webm', 'mkv', 'mpg', 'mpeg'].includes(ext);
+    const isVideo = fileObj.file.type.startsWith('video/') || /\.(mov|mp4|avi|webm|mkv|mpg|mpeg)$/i.test(fileObj.file.name);
 
     if (isVideo) {
         try {
@@ -427,12 +413,16 @@ const HackyMetaGenApp = () => {
           reader.onerror = () => reject(new Error("File reading error"));
           reader.readAsDataURL(fileObj.file);
         });
+
+        // --- STRICT MIME TYPE DETECTION FIX ---
         mimeType = fileObj.file.type;
-        if (!mimeType || mimeType === '') {
-            if (ext === 'jpg' || ext === 'jpeg') mimeType = 'image/jpeg';
-            else if (ext === 'png') mimeType = 'image/png';
-            else if (ext === 'webp') mimeType = 'image/webp';
-            else if (ext === 'ai' || ext === 'eps') { mimeType = 'image/png'; }
+        // If empty or generic binary stream, try to deduce from extension
+        if (!mimeType || mimeType === '' || mimeType === 'application/octet-stream') {
+             if (['jpg', 'jpeg'].includes(ext)) mimeType = 'image/jpeg';
+             else if (ext === 'png') mimeType = 'image/png';
+             else if (ext === 'webp') mimeType = 'image/webp';
+             else if (['ai', 'eps'].includes(ext)) mimeType = 'image/png'; // Best effort fallback for previews
+             else mimeType = 'image/jpeg'; // Final fallback
         }
     }
 
@@ -472,7 +462,6 @@ const HackyMetaGenApp = () => {
     `;
 
     const contentParts = [{ text: systemPrompt }];
-    
     if (isVideo && Array.isArray(base64Data)) {
       base64Data.forEach(frameData => {
         contentParts.push({ inlineData: { mimeType: mimeType, data: frameData } });
@@ -489,19 +478,14 @@ const HackyMetaGenApp = () => {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                apiKey: activeKey, // Pass explicitly if using backend relay
-                contents: [{
-                    parts: contentParts
-                }],
-                generationConfig: {
-                    responseMimeType: "application/json"
-                }
+                apiKey: activeKey,
+                contents: [{ parts: contentParts }],
+                generationConfig: { responseMimeType: "application/json" }
             }),
             signal: controller.signal
         });
 
         if (!response.ok) {
-            // Try to parse error
             let errorMsg = `API Error: ${response.status} ${response.statusText}`;
             try {
                 const errorData = await response.json();
@@ -511,21 +495,12 @@ const HackyMetaGenApp = () => {
         }
 
         const data = await response.json();
-
-        // Handle standard Gemini response structure
         if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
+        if (!data.candidates || !data.candidates[0]) throw new Error("No candidates returned from AI");
         
-        if (!data.candidates || !data.candidates[0]) {
-            throw new Error("No candidates returned from AI");
-        }
-
         const candidate = data.candidates[0];
-        if (candidate.finishReason === "SAFETY") {
-            throw new Error("Generation blocked by safety settings");
-        }
-        if (!candidate.content?.parts?.[0]) {
-            throw new Error("No content generated");
-        }
+        if (candidate.finishReason === "SAFETY") throw new Error("Generation blocked by safety settings");
+        if (!candidate.content?.parts?.[0]) throw new Error("No content generated");
 
         let resultText = candidate.content.parts[0].text;
         
@@ -561,7 +536,6 @@ const HackyMetaGenApp = () => {
             let success = false;
             let lastError = null;
 
-            // Check if file still exists using Ref to avoid stale state closure
             if (!filesRef.current.find(f => f.id === file.id)) continue;
 
             while (retries > 0 && !success) {
@@ -608,7 +582,6 @@ const HackyMetaGenApp = () => {
                             };
                         });
                     });
-                    
                     success = true;
                     await new Promise(resolve => setTimeout(resolve, 1000));
 
@@ -628,10 +601,9 @@ const HackyMetaGenApp = () => {
 
             if (!success) {
                 let displayError = "Failed to generate metadata.";
-                // Safely handle error message conversion
                 if (lastError) {
                     const msg = typeof lastError === 'string' ? lastError : (lastError.message || JSON.stringify(lastError));
-                    if (msg.includes("API Key") || msg.includes("403") || msg.includes("400") || msg.includes("Invalid") || msg.includes("abort") || msg.includes("Quota") || msg.includes("429")) {
+                    if (msg.includes("API Key") || msg.includes("403") || msg.includes("400") || msg.includes("Invalid") || msg.includes("abort") || msg.includes("Quota") || msg.includes("429") || msg.includes("API Error")) {
                         displayError = "Check or replace to a new api key. (" + msg + ")";
                     } else {
                         displayError = msg;
@@ -645,30 +617,32 @@ const HackyMetaGenApp = () => {
             }
          }
      });
-
      processingMutex.current = nextChain;
      return nextChain;
   };
 
+  const handleApplyKeyClick = () => handleApplyKey();
+
+  const handleFileUpload = (e) => {
+    if (e.target.files && e.target.files.length > 0) {
+      processUploadedFiles(Array.from(e.target.files));
+    }
+  };
+
   const processUploadedFiles = useCallback(async (uploadedFiles) => {
-    // Access key via Ref to prevent stale closure issues in callback
     const activeKey = apiKeyRef.current || localStorage.getItem('hackymetagen_api_key') || envApiKey;
     if (!activeKey) {
       setShowTutorial(true);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
-      }
+      if (fileInputRef.current) fileInputRef.current.value = '';
       return;
     }
-
     const currentSession = sessionId.current;
-
     const newFilesPromises = uploadedFiles.map(async (file) => {
       let fileName = file.name; 
       const isMov = fileName.toLowerCase().endsWith('.mov');
       const ext = fileName.split('.').pop().toLowerCase();
-      
       let determinedType = contentType;
+      
       if (['mov', 'mp4', 'avi', 'webm', 'mkv', 'mpg', 'mpeg'].includes(ext) || file.type.startsWith('video/')) {
         determinedType = 'video';
       } else if (['ai', 'eps', 'svg'].includes(ext)) {
@@ -676,32 +650,23 @@ const HackyMetaGenApp = () => {
       } else {
         determinedType = 'image';
       }
-
       const previewUrl = await generateThumbnail(file);
-      const initialStatus = isAutoGenerate ? 'processing' : 'pending';
-
       return {
         id: crypto.randomUUID(),
         file,
         name: fileName,
         preview: previewUrl,
         type: determinedType,
-        status: initialStatus,
+        status: isAutoGenerate ? 'processing' : 'pending',
         categoryId: 8, 
         aiCategoryId: null, 
-        metadata: {
-          title: '',
-          keywords: ''
-        },
+        metadata: { title: '', keywords: '' },
         keywordAnalysis: { short: 0, mid: 0, long: 0, total: 0 }
       };
     });
 
     const newFiles = await Promise.all(newFilesPromises);
-
-    if (currentSession !== sessionId.current) {
-        return; 
-    }
+    if (currentSession !== sessionId.current) return; 
 
     setFiles(prev => {
         const updated = [...prev, ...newFiles];
@@ -711,44 +676,27 @@ const HackyMetaGenApp = () => {
     if (files.length === 0 && newFiles.length > 0) {
         setSelectedFileId(newFiles[0].id);
     }
-
     if (isAutoGenerate) {
         runBatchGeneration(newFiles);
     }
-
-  }, [contentType, files.length, selectedFileId, isAutoGenerate, useAiCategory, preserveExtension, csvExtension, userApiKey]); // Dependencies still useful for React, but internal logic uses refs
-
-  // --- Handlers ---
-  const handleFileUpload = (e) => {
-    if (e.target.files && e.target.files.length > 0) {
-      processUploadedFiles(Array.from(e.target.files));
-    }
-  };
+  }, [contentType, files.length, selectedFileId, isAutoGenerate, useAiCategory, preserveExtension, csvExtension, userApiKey]);
 
   const removeFile = (id, e) => {
     e.stopPropagation();
     setFiles(prev => prev.filter(f => f.id !== id));
-    if (selectedFileId === id) {
-      setSelectedFileId(null);
-    }
+    if (selectedFileId === id) setSelectedFileId(null);
   };
 
   const handleResetUploads = () => {
     if (files.length === 0) return;
     sessionId.current += 1;
-    files.forEach(file => {
-        if (file.preview && file.preview.startsWith('blob:')) {
-            URL.revokeObjectURL(file.preview);
-        }
-    });
+    files.forEach(file => { if (file.preview && file.preview.startsWith('blob:')) URL.revokeObjectURL(file.preview); });
     setFiles([]);
     setSelectedFileId(null);
     setViewMode('batch');
     setIsProcessing(false);
     setIsGlobalDragging(false);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const updateFileExtension = (id, newExt) => {
@@ -761,12 +709,9 @@ const HackyMetaGenApp = () => {
 
   const generateMetadata = async (fileObj) => {
     if (!fileObj) return;
-
     setFiles(prev => prev.map(f => f.id === fileObj.id ? { ...f, status: 'processing' } : f));
-    
     try {
       const jsonResult = await performGeneration(fileObj);
-
       const kwArray = jsonResult.keywords.split(',').map(k => k.trim());
       const analysis = {
         short: kwArray.filter(k => k.split(' ').length <= 2).length,
@@ -774,24 +719,20 @@ const HackyMetaGenApp = () => {
         long: kwArray.filter(k => k.split(' ').length >= 4).length,
         total: kwArray.length
       };
-
       setFiles(prev => prev.map(f => {
         if (f.id !== fileObj.id) return f;
         const currentCsvExt = csvExtensionRef.current;
         const currentPreserve = preserveExtensionRef.current;
         let finalName = f.name;
-
         if (!currentPreserve) {
             const isVideoFile = f.type === 'video';
             const isVideoExt = ['mov', 'mp4', 'mpg'].includes(currentCsvExt);
-            
             if (isVideoFile === isVideoExt) {
                 finalName = f.file.name.replace(/\.[^/.]+$/, "") + "." + currentCsvExt;
             } else if (!isVideoFile && !isVideoExt) {
                 finalName = f.file.name.replace(/\.[^/.]+$/, "") + "." + currentCsvExt;
             }
         }
-
         return { 
           ...f, 
           status: 'complete', 
@@ -802,7 +743,6 @@ const HackyMetaGenApp = () => {
           name: finalName
         };
       }));
-
     } catch (error) {
       console.error("Generation Error:", error);
       let displayError = error.message || "Unknown error";
@@ -842,7 +782,6 @@ const HackyMetaGenApp = () => {
       const keywords = `"${f.metadata.keywords ? f.metadata.keywords.replace(/"/g, '""') : ''}"`;
       const filename = f.name; 
       const category = f.categoryId || 8; 
-      
       return `${filename},${title},${keywords},${category}`;
     }).filter(row => row !== null).join("\n");
 
@@ -863,7 +802,6 @@ const HackyMetaGenApp = () => {
     document.body.appendChild(textArea);
     textArea.focus();
     textArea.select();
-    
     try {
       document.execCommand('copy');
     } catch (err) {
@@ -897,12 +835,10 @@ const HackyMetaGenApp = () => {
   const handleDropKeyword = (e, targetIndex) => {
     e.preventDefault();
     if (draggedIndex === null || draggedIndex === targetIndex || !activeFile) return;
-
     const currentKeywords = activeFile.metadata.keywords.split(',').map(k => k.trim()).filter(k => k);
     const itemToMove = currentKeywords[draggedIndex];
     currentKeywords.splice(draggedIndex, 1);
     currentKeywords.splice(targetIndex, 0, itemToMove);
-    
     const updatedKeywordsString = currentKeywords.join(', ');
     updateFileKeywords(activeFile.id, updatedKeywordsString);
     setDraggedIndex(null);
@@ -1035,8 +971,8 @@ const HackyMetaGenApp = () => {
               value={userApiKey}
               onChange={(e) => {
                 setUserApiKey(e.target.value);
-                setIsKeySaved(false); // Reset saved state on edit
-                setIsKeyInvalid(false); // Reset invalid state on edit
+                setIsKeySaved(false); 
+                setIsKeyInvalid(false); 
               }}
               className={`text-xs px-3 py-2 rounded-lg border transition-all w-20 focus:w-48 sm:w-32 sm:focus:w-64 ${
                 isKeyInvalid 
@@ -1049,7 +985,7 @@ const HackyMetaGenApp = () => {
               }`}
             />
             <button 
-              onClick={handleApplyKey}
+              onClick={handleApplyKeyClick}
               disabled={isVerifying}
               className={`p-2 rounded-lg border transition-colors ${
                 isKeyInvalid
@@ -1080,7 +1016,7 @@ const HackyMetaGenApp = () => {
           <div className={`w-px h-6 mx-2 hidden sm:block ${theme === 'dark' ? 'bg-slate-800' : 'bg-slate-200'}`}></div>
 
           <button 
-            onClick={toggleTheme}
+            onClick={handleToggleTheme}
             className={`p-2 rounded-full transition-colors ${theme === 'dark' ? 'hover:bg-slate-800 text-slate-400' : 'hover:bg-slate-100 text-slate-600'}`}
           >
             {theme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
@@ -1130,7 +1066,7 @@ const HackyMetaGenApp = () => {
               <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400">Metadata Generator</span>
             </h2>
             <p className={`text-sm mt-1 ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>
-               {completeFiles.length} of {files.length} assets processed
+               {completeFiles.length} of {totalFiles} assets processed
             </p>
          </div>
       )}
@@ -1384,7 +1320,7 @@ const HackyMetaGenApp = () => {
             <div className="h-full flex flex-col">
               <div className="mb-6">
                 <h3 className="text-2xl font-bold">Multi-File Review</h3>
-                <p className={`text-sm ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>Review Metadata</p>
+                <p className={`text-sm ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>Review your metadata here</p>
               </div>
               
               <div className="flex-1 lg:overflow-y-auto pr-2 pb-24">
