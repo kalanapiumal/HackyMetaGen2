@@ -98,7 +98,7 @@ const HackyMetaGenApp = () => {
   const [showSuccessMessage, setShowSuccessMessage] = useState(false); 
   const [showErrorMessage, setShowErrorMessage] = useState(false); 
   const [showTutorial, setShowTutorial] = useState(false); 
-  const [showUnsupportedError, setShowUnsupportedError] = useState(false); // NEW: Unsupported file error state
+  const [showUnsupportedError, setShowUnsupportedError] = useState(false); 
   const [isVerifying, setIsVerifying] = useState(false); 
   const envApiKey = ""; 
 
@@ -469,11 +469,10 @@ const HackyMetaGenApp = () => {
     const timeoutId = setTimeout(() => controller.abort(), 60000); 
 
     try {
-        const response = await fetch(`/api/generate`, {
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${activeKey}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                apiKey: activeKey,
                 contents: [{ parts: contentParts }],
                 generationConfig: { responseMimeType: "application/json" }
             }),
