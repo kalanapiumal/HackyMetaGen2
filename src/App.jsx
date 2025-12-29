@@ -24,7 +24,8 @@ import {
   Plus,
   Brain,
   ShieldCheck,
-  ShieldAlert
+  ShieldAlert,
+  AlertTriangle
 } from 'lucide-react';
 
 /**
@@ -34,7 +35,7 @@ import {
 
 // --- Constants ---
 const MAX_TITLE_LENGTH = 125;
-const MIN_TITLE_LENGTH = 100; 
+const MIN_TITLE_LENGTH = 100; // Soft limit for validation
 const TARGET_KEYWORD_COUNT = 49;
 
 const ADOBE_CATEGORIES = [
@@ -98,6 +99,7 @@ const HackyMetaGenApp = () => {
   const [showErrorMessage, setShowErrorMessage] = useState(false); 
   const [showTutorial, setShowTutorial] = useState(false); 
   const [isVerifying, setIsVerifying] = useState(false); 
+  const [showUnsupportedError, setShowUnsupportedError] = useState(false); // New state for unsupported files
   const envApiKey = ""; 
 
   // UI State
@@ -116,11 +118,11 @@ const HackyMetaGenApp = () => {
   const filesRef = useRef(files); 
   const apiKeyRef = useRef(userApiKey); 
 
-  // Defined as simple content array to avoid object rendering issues in JSX
+  // Defined as mixed content array
   const features = [
-    "Video Metadata Support",
-    "CSV FileName Extension Selection Support",
-    "AI Approval Result Prediction Beta 0.5 Added"
+    { type: 'text', content: "Video Metadata Support" },
+    { type: 'text', content: "CSV FileName Extension Selection Support" },
+    { type: 'jsx', content: "AI Approval Result Prediction Beta 0.5 Added" }
   ];
 
   // 2. Effects
@@ -182,18 +184,18 @@ const HackyMetaGenApp = () => {
         localStorage.setItem('hackymetagen_api_key', keyToTest);
         setIsKeySaved(true);
         setIsKeyInvalid(false);
+        // Don't clear input, keep it for user to see
         setShowSuccessMessage(true);
         setTimeout(() => setShowSuccessMessage(false), 5000);
     } else {
         setIsKeyInvalid(true);
         setIsKeySaved(false);
-        setUserApiKey(''); 
+        setUserApiKey(''); // Clear on fail
         setShowErrorMessage(true);
         setTimeout(() => setShowErrorMessage(false), 5000);
     }
   };
 
-  // Define handler explicitly to avoid ReferenceError
   const handleToggleTheme = () => {
     setTheme(prev => prev === 'light' ? 'dark' : 'light');
   };
@@ -610,6 +612,24 @@ const HackyMetaGenApp = () => {
       if (fileInputRef.current) fileInputRef.current.value = '';
       return;
     }
+
+    // 1. STRICTLY BLOCK UNSUPPORTED FILES
+    const supportedExtensions = ['jpg', 'jpeg', 'png', 'webp', 'ai', 'eps', 'svg', 'mov', 'mp4', 'avi', 'webm', 'mkv', 'mpg', 'mpeg'];
+    let hasUnsupported = false;
+    for (const file of uploadedFiles) {
+       const ext = file.name.split('.').pop().toLowerCase();
+       if (!supportedExtensions.includes(ext)) {
+          hasUnsupported = true;
+          break;
+       }
+    }
+
+    if (hasUnsupported) {
+        setShowUnsupportedError(true);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+        return; 
+    }
+
     const currentSession = sessionId.current;
     const newFilesPromises = uploadedFiles.map(async (file) => {
       let fileName = file.name; 
@@ -817,12 +837,13 @@ const HackyMetaGenApp = () => {
     setDraggedIndex(null);
   };
   
-  // --- Render Components ---
+  // --- Main Render Return ---
   const activeFile = files.find(f => f.id === selectedFileId);
   const completeFiles = files.filter(f => f.status === 'complete');
-  // Derived state for all files complete
   const allFilesComplete = files.length > 0 && files.every(f => f.status === 'complete');
-  
+  const totalFiles = files.length;
+  const progressPercent = totalFiles > 0 ? (completeFiles.length / totalFiles) * 100 : 0;
+
   return (
     <div 
       className={`min-h-screen w-full transition-colors duration-300 pb-20 ${theme === 'dark' ? 'bg-slate-900 text-slate-100' : 'bg-slate-50 text-slate-900'}`}
@@ -868,6 +889,27 @@ const HackyMetaGenApp = () => {
           <Upload size={64} className="text-white mb-4 animate-bounce pointer-events-none" />
           <h2 className="text-3xl font-bold text-white mb-2 pointer-events-none">Drop files anywhere!</h2>
           <p className="text-indigo-200 text-lg pointer-events-none">Support for Images, Videos, and Vectors</p>
+        </div>
+      )}
+
+      {/* UNSUPPORTED FILE MODAL */}
+      {showUnsupportedError && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+           <div className={`max-w-md w-full rounded-2xl shadow-2xl overflow-hidden ${theme === 'dark' ? 'bg-slate-800' : 'bg-white'} p-6 text-center`}>
+              <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <AlertTriangle size={32} className="text-red-500" />
+              </div>
+              <h3 className="text-xl font-bold mb-2">Unsupported File Type</h3>
+              <p className={`mb-6 ${theme === 'dark' ? 'text-slate-300' : 'text-slate-600'}`}>
+                Please re check and remove unsupported file types
+              </p>
+              <button 
+                  onClick={() => setShowUnsupportedError(false)}
+                  className="w-full py-3 rounded-xl bg-red-500 hover:bg-red-600 text-white font-semibold transition-colors"
+              >
+                  Close
+              </button>
+           </div>
         </div>
       )}
 
@@ -1277,7 +1319,6 @@ const HackyMetaGenApp = () => {
                       : theme === 'dark' ? 'border-slate-700 hover:bg-slate-800' : 'border-slate-300 hover:bg-slate-100'
                   }`}
                   title="Export CSV manually"
-                  disabled={completeFiles.length === 0}
                 >
                   <Download size={18} />
                 </button>
@@ -1325,10 +1366,14 @@ const HackyMetaGenApp = () => {
                   <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                     {files.map(file => {
                       const currentExt = file.name.split('.').pop().toLowerCase();
+                      
+                      // Determine available extensions based on file type
+                      // Updated check to verify if the file object type is video
                       const extensions = file.type === 'video' 
                         ? ['mov', 'mp4', 'mpg'] 
-                        : ['jpg', 'png', 'ai', 'eps', 'svg'];
+                        : ['jpg', 'png', 'ai', 'eps', 'svg']; // Updated order
                         
+                      // The displayed filename should be the one in the state (which reflects the global replace)
                       const displayFilename = file.name;
 
                       return (
