@@ -34,7 +34,7 @@ import {
 
 // --- Constants ---
 const MAX_TITLE_LENGTH = 125;
-const MIN_TITLE_LENGTH = 100; // Soft limit for validation
+const MIN_TITLE_LENGTH = 100; 
 const TARGET_KEYWORD_COUNT = 49;
 
 const ADOBE_CATEGORIES = [
@@ -62,7 +62,7 @@ const ADOBE_CATEGORIES = [
 ];
 
 const HackyMetaGenApp = () => {
-  // 1. State Declarations (All hooks first)
+  // 1. State Declarations
   const [theme, setTheme] = useState(() => localStorage.getItem('hackymetagen_theme') || 'dark');
   const [files, setFiles] = useState([]);
   const [selectedFileId, setSelectedFileId] = useState(null);
@@ -111,16 +111,16 @@ const HackyMetaGenApp = () => {
   const sessionId = useRef(0);
   const processingMutex = useRef(Promise.resolve());
   
-  // Refs for async access
   const csvExtensionRef = useRef(csvExtension);
   const preserveExtensionRef = useRef(preserveExtension);
   const filesRef = useRef(files); 
   const apiKeyRef = useRef(userApiKey); 
 
+  // Defined as simple content array to avoid object rendering issues in JSX
   const features = [
-    <span key="f1">Video Metadata Support</span>,
-    <span key="f2">CSV FileName Extension Selection Support</span>,
-    <span key="f3">NEW FEATURE : AI Approval Result Prediction <span className="mx-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-500/20 text-blue-400 border border-blue-500/30 align-middle">Beta 0.5</span> Added</span>
+    "Video Metadata Support",
+    "CSV FileName Extension Selection Support",
+    "AI Approval Result Prediction Beta 0.5 Added"
   ];
 
   // 2. Effects
@@ -130,13 +130,11 @@ const HackyMetaGenApp = () => {
   useEffect(() => { localStorage.setItem('hackymetagen_csv_extension', csvExtension); }, [csvExtension]);
   useEffect(() => { localStorage.setItem('hackymetagen_preserve_extension', JSON.stringify(preserveExtension)); }, [preserveExtension]);
   
-  // Sync Refs
   useEffect(() => { csvExtensionRef.current = csvExtension; }, [csvExtension]);
   useEffect(() => { preserveExtensionRef.current = preserveExtension; }, [preserveExtension]);
   useEffect(() => { filesRef.current = files; }, [files]);
   useEffect(() => { apiKeyRef.current = userApiKey; }, [userApiKey]);
 
-  // Load API Key
   useEffect(() => {
     const savedKey = localStorage.getItem('hackymetagen_api_key');
     if (savedKey) {
@@ -146,12 +144,10 @@ const HackyMetaGenApp = () => {
     }
   }, []);
 
-  // Title Update
   useEffect(() => {
     document.title = "Hacky MetaGen";
   }, []);
 
-  // Animation Loop
   useEffect(() => {
     const interval = setInterval(() => {
       setFadeClass('opacity-0 -translate-y-2');
@@ -161,7 +157,7 @@ const HackyMetaGenApp = () => {
       }, 300);
     }, 5000); 
     return () => clearInterval(interval);
-  }, []);
+  }, [features.length]);
 
   // 3. Logic Functions
   const checkApiKeyValidity = async (key) => {
@@ -186,19 +182,19 @@ const HackyMetaGenApp = () => {
         localStorage.setItem('hackymetagen_api_key', keyToTest);
         setIsKeySaved(true);
         setIsKeyInvalid(false);
-        // Don't clear input, keep it for user to see
         setShowSuccessMessage(true);
         setTimeout(() => setShowSuccessMessage(false), 5000);
     } else {
         setIsKeyInvalid(true);
         setIsKeySaved(false);
-        setUserApiKey(''); // Clear on fail
+        setUserApiKey(''); 
         setShowErrorMessage(true);
         setTimeout(() => setShowErrorMessage(false), 5000);
     }
   };
 
-  const toggleTheme = () => {
+  // Define handler explicitly to avoid ReferenceError
+  const handleToggleTheme = () => {
     setTheme(prev => prev === 'light' ? 'dark' : 'light');
   };
 
@@ -224,9 +220,7 @@ const HackyMetaGenApp = () => {
         video.muted = true;
         video.playsInline = true;
         video.currentTime = 1;
-
         const videoTimeout = setTimeout(() => resolve(null), 5000);
-
         video.onloadeddata = () => { if (video.duration < 1) video.currentTime = 0; };
         video.onseeked = () => {
           clearTimeout(videoTimeout);
@@ -325,15 +319,12 @@ const HackyMetaGenApp = () => {
       const canvas = document.createElement('canvas');
       const ctx = canvas.getContext('2d');
       const url = URL.createObjectURL(file);
-
       video.src = url;
       video.muted = true;
       video.playsInline = true;
       video.crossOrigin = "anonymous";
-
       const frames = [];
       let currentFrame = 0;
-
       const videoTimeout = setTimeout(() => {
              reject(new Error("Video parsing timed out. Format might be unsupported."));
       }, 15000); 
@@ -380,11 +371,9 @@ const HackyMetaGenApp = () => {
   // --- API Interaction ---
   const performGeneration = async (fileObj) => {
     const activeKey = apiKeyRef.current || localStorage.getItem('hackymetagen_api_key') || envApiKey;
-    
     let mimeType = '';
     let base64Data = null;
     const ext = fileObj.file.name.split('.').pop().toLowerCase();
-    
     const isVideo = fileObj.file.type.startsWith('video/') || /\.(mov|mp4|avi|webm|mkv|mpg|mpeg)$/i.test(fileObj.file.name);
 
     if (isVideo) {
@@ -413,16 +402,13 @@ const HackyMetaGenApp = () => {
           reader.onerror = () => reject(new Error("File reading error"));
           reader.readAsDataURL(fileObj.file);
         });
-
-        // --- STRICT MIME TYPE DETECTION FIX ---
         mimeType = fileObj.file.type;
-        // If empty or generic binary stream, try to deduce from extension
         if (!mimeType || mimeType === '' || mimeType === 'application/octet-stream') {
              if (['jpg', 'jpeg'].includes(ext)) mimeType = 'image/jpeg';
              else if (ext === 'png') mimeType = 'image/png';
              else if (ext === 'webp') mimeType = 'image/webp';
-             else if (['ai', 'eps'].includes(ext)) mimeType = 'image/png'; // Best effort fallback for previews
-             else mimeType = 'image/jpeg'; // Final fallback
+             else if (['ai', 'eps'].includes(ext)) mimeType = 'image/png'; 
+             else mimeType = 'image/jpeg';
         }
     }
 
@@ -497,13 +483,11 @@ const HackyMetaGenApp = () => {
         const data = await response.json();
         if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
         if (!data.candidates || !data.candidates[0]) throw new Error("No candidates returned from AI");
-        
         const candidate = data.candidates[0];
         if (candidate.finishReason === "SAFETY") throw new Error("Generation blocked by safety settings");
         if (!candidate.content?.parts?.[0]) throw new Error("No content generated");
 
         let resultText = candidate.content.parts[0].text;
-        
         const firstBrace = resultText.indexOf('{');
         const lastBrace = resultText.lastIndexOf('}');
         if (firstBrace !== -1 && lastBrace !== -1) {
@@ -511,11 +495,9 @@ const HackyMetaGenApp = () => {
         } else {
             resultText = resultText.replace(/```json/g, '').replace(/```/g, '').trim();
         }
-        
         if (!resultText.trim()) throw new Error("No JSON found in response");
 
         const parsedResult = JSON.parse(resultText);
-
         if (parsedResult.keywords && typeof parsedResult.keywords === 'string') {
           let kws = parsedResult.keywords.split(',').map(k => k.trim()).filter(k => k.length > 0);
           if (kws.length > 49) kws = kws.slice(0, 49);
@@ -548,19 +530,15 @@ const HackyMetaGenApp = () => {
                         long: kwArray.filter(k => k.split(' ').length >= 4).length,
                         total: kwArray.length
                     };
-                    
                     setFiles(prev => {
                         if (!prev.find(f => f.id === file.id)) return prev;
-
                         return prev.map(f => {
                             if (f.id !== file.id) return f;
-                            
                             const predictedCategory = jsonResult.category_id || 8;
                             const finalCategory = useAiCategory ? predictedCategory : 8;
                             const currentCsvExt = csvExtensionRef.current;
                             const currentPreserve = preserveExtensionRef.current;
                             let finalName = f.name;
-
                             if (!currentPreserve) {
                                 const isVideoFile = f.type === 'video';
                                 const isVideoExt = ['mov', 'mp4', 'mpg'].includes(currentCsvExt);
@@ -570,7 +548,6 @@ const HackyMetaGenApp = () => {
                                     finalName = f.file.name.replace(/\.[^/.]+$/, "") + "." + currentCsvExt;
                                 }
                             }
-
                             return { 
                                 ...f, 
                                 status: 'complete', 
@@ -584,11 +561,9 @@ const HackyMetaGenApp = () => {
                     });
                     success = true;
                     await new Promise(resolve => setTimeout(resolve, 1000));
-
                 } catch (error) {
                     console.error(`Error processing ${file.name}:`, error);
                     lastError = error;
-                    
                     const errorStr = error.toString();
                     if (errorStr.includes("API Key") || errorStr.includes("403") || errorStr.includes("400") || errorStr.includes("Invalid") || errorStr.includes("Quota")) {
                          setIsKeyInvalid(true);
@@ -609,7 +584,6 @@ const HackyMetaGenApp = () => {
                         displayError = msg;
                     }
                 }
-
                 setFiles(prev => {
                     if (!prev.find(f => f.id === file.id)) return prev;
                     return prev.map(f => f.id === file.id ? { ...f, status: 'error', errorMessage: displayError } : f);
@@ -642,7 +616,6 @@ const HackyMetaGenApp = () => {
       const isMov = fileName.toLowerCase().endsWith('.mov');
       const ext = fileName.split('.').pop().toLowerCase();
       let determinedType = contentType;
-      
       if (['mov', 'mp4', 'avi', 'webm', 'mkv', 'mpg', 'mpeg'].includes(ext) || file.type.startsWith('video/')) {
         determinedType = 'video';
       } else if (['ai', 'eps', 'svg'].includes(ext)) {
@@ -847,6 +820,8 @@ const HackyMetaGenApp = () => {
   // --- Render Components ---
   const activeFile = files.find(f => f.id === selectedFileId);
   const completeFiles = files.filter(f => f.status === 'complete');
+  // Derived state for all files complete
+  const allFilesComplete = files.length > 0 && files.every(f => f.status === 'complete');
   
   return (
     <div 
@@ -985,7 +960,7 @@ const HackyMetaGenApp = () => {
               }`}
             />
             <button 
-              onClick={handleApplyKeyClick}
+              onClick={handleApplyKey}
               disabled={isVerifying}
               className={`p-2 rounded-lg border transition-colors ${
                 isKeyInvalid
@@ -1033,7 +1008,7 @@ const HackyMetaGenApp = () => {
         <div className="max-w-4xl mx-auto mt-12 px-6 text-center mb-12">
           {/* Animated Feature Badge */}
           <span className={`inline-block px-3 py-1 mb-4 text-xs font-semibold tracking-wider text-indigo-400 uppercase bg-indigo-500/10 rounded-full border border-indigo-500/20 transition-all duration-300 transform ${fadeClass}`}>
-            New Feature: {features[featureIndex]}
+            New Feature: {features[featureIndex].type === 'jsx' ? features[featureIndex].content : features[featureIndex].content}
           </span>
           <h2 className="text-4xl md:text-5xl font-extrabold tracking-tight mb-4">
             <span className={theme === 'dark' ? 'text-white' : 'text-slate-900'}>Adobe Stock</span>{' '}
@@ -1051,7 +1026,6 @@ const HackyMetaGenApp = () => {
               <span 
                 className="bg-clip-text text-transparent transition-all duration-700 ease-out"
                 style={{
-                  // Updated color to #16a34a (Tailwind green-600) to match Auto Generate button
                   backgroundImage: `linear-gradient(to right, #16a34a ${
                     files.length > 0 ? (completeFiles.length / files.length) * 100 : 0
                   }%, ${theme === 'dark' ? '#ffffff' : '#0f172a'} ${
@@ -1066,7 +1040,7 @@ const HackyMetaGenApp = () => {
               <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400">Metadata Generator</span>
             </h2>
             <p className={`text-sm mt-1 ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>
-               {completeFiles.length} of {totalFiles} assets processed
+               {completeFiles.length} of {files.length} assets processed
             </p>
          </div>
       )}
@@ -1298,7 +1272,7 @@ const HackyMetaGenApp = () => {
                 <button 
                   onClick={() => handleExportCSV()}
                   className={`px-4 rounded-xl border flex items-center justify-center transition-colors ${
-                    completeFiles.length > 0
+                    allFilesComplete
                       ? 'bg-green-600 hover:bg-green-700 text-white border-green-600 shadow-lg shadow-green-500/20'
                       : theme === 'dark' ? 'border-slate-700 hover:bg-slate-800' : 'border-slate-300 hover:bg-slate-100'
                   }`}
