@@ -35,7 +35,7 @@ import {
 
 // --- Constants ---
 const MAX_TITLE_LENGTH = 125;
-const MIN_TITLE_LENGTH = 100; // Soft limit for validation
+const MIN_TITLE_LENGTH = 100; 
 const TARGET_KEYWORD_COUNT = 49;
 
 const ADOBE_CATEGORIES = [
@@ -98,8 +98,8 @@ const HackyMetaGenApp = () => {
   const [showSuccessMessage, setShowSuccessMessage] = useState(false); 
   const [showErrorMessage, setShowErrorMessage] = useState(false); 
   const [showTutorial, setShowTutorial] = useState(false); 
+  const [showUnsupportedError, setShowUnsupportedError] = useState(false); // NEW: Unsupported file error state
   const [isVerifying, setIsVerifying] = useState(false); 
-  const [showUnsupportedError, setShowUnsupportedError] = useState(false); // New state for unsupported files
   const envApiKey = ""; 
 
   // UI State
@@ -184,18 +184,18 @@ const HackyMetaGenApp = () => {
         localStorage.setItem('hackymetagen_api_key', keyToTest);
         setIsKeySaved(true);
         setIsKeyInvalid(false);
-        // Don't clear input, keep it for user to see
         setShowSuccessMessage(true);
         setTimeout(() => setShowSuccessMessage(false), 5000);
     } else {
         setIsKeyInvalid(true);
         setIsKeySaved(false);
-        setUserApiKey(''); // Clear on fail
+        setUserApiKey(''); 
         setShowErrorMessage(true);
         setTimeout(() => setShowErrorMessage(false), 5000);
     }
   };
 
+  // Define handler explicitly to avoid ReferenceError
   const handleToggleTheme = () => {
     setTheme(prev => prev === 'light' ? 'dark' : 'light');
   };
@@ -404,13 +404,20 @@ const HackyMetaGenApp = () => {
           reader.onerror = () => reject(new Error("File reading error"));
           reader.readAsDataURL(fileObj.file);
         });
-        mimeType = fileObj.file.type;
-        if (!mimeType || mimeType === '' || mimeType === 'application/octet-stream') {
+
+        // --- STRICT MIME TYPE DETECTION FIX ---
+        // Force mapped supported types if browser gives us garbage
+        const supportedMimes = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'];
+        let detectedMime = fileObj.file.type;
+        
+        if (!detectedMime || detectedMime === '' || detectedMime === 'application/octet-stream' || !supportedMimes.includes(detectedMime)) {
              if (['jpg', 'jpeg'].includes(ext)) mimeType = 'image/jpeg';
              else if (ext === 'png') mimeType = 'image/png';
              else if (ext === 'webp') mimeType = 'image/webp';
-             else if (['ai', 'eps'].includes(ext)) mimeType = 'image/png'; 
+             else if (['ai', 'eps', 'svg'].includes(ext)) mimeType = 'image/png'; 
              else mimeType = 'image/jpeg';
+        } else {
+            mimeType = detectedMime;
         }
     }
 
@@ -1319,6 +1326,7 @@ const HackyMetaGenApp = () => {
                       : theme === 'dark' ? 'border-slate-700 hover:bg-slate-800' : 'border-slate-300 hover:bg-slate-100'
                   }`}
                   title="Export CSV manually"
+                  disabled={completeFiles.length === 0}
                 >
                   <Download size={18} />
                 </button>
@@ -1366,14 +1374,10 @@ const HackyMetaGenApp = () => {
                   <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                     {files.map(file => {
                       const currentExt = file.name.split('.').pop().toLowerCase();
-                      
-                      // Determine available extensions based on file type
-                      // Updated check to verify if the file object type is video
                       const extensions = file.type === 'video' 
                         ? ['mov', 'mp4', 'mpg'] 
-                        : ['jpg', 'png', 'ai', 'eps', 'svg']; // Updated order
+                        : ['jpg', 'png', 'ai', 'eps', 'svg'];
                         
-                      // The displayed filename should be the one in the state (which reflects the global replace)
                       const displayFilename = file.name;
 
                       return (
