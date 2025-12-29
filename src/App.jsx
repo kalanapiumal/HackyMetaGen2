@@ -25,7 +25,8 @@ import {
   Brain,
   ShieldCheck,
   ShieldAlert,
-  AlertTriangle
+  AlertTriangle,
+  Server
 } from 'lucide-react';
 
 /**
@@ -91,6 +92,12 @@ const HackyMetaGenApp = () => {
     return saved !== null ? JSON.parse(saved) : false;
   });
 
+  // Backend Toggle State
+  const [useBackend, setUseBackend] = useState(() => {
+    const saved = localStorage.getItem('hackymetagen_use_backend');
+    return saved !== null ? JSON.parse(saved) : true; 
+  });
+
   // API Key State
   const [userApiKey, setUserApiKey] = useState(''); 
   const [isKeySaved, setIsKeySaved] = useState(false); 
@@ -117,6 +124,7 @@ const HackyMetaGenApp = () => {
   const preserveExtensionRef = useRef(preserveExtension);
   const filesRef = useRef(files); 
   const apiKeyRef = useRef(userApiKey); 
+  const useBackendRef = useRef(useBackend);
 
   // Defined as mixed content array
   const features = [
@@ -131,11 +139,13 @@ const HackyMetaGenApp = () => {
   useEffect(() => { localStorage.setItem('hackymetagen_use_ai_category', JSON.stringify(useAiCategory)); }, [useAiCategory]);
   useEffect(() => { localStorage.setItem('hackymetagen_csv_extension', csvExtension); }, [csvExtension]);
   useEffect(() => { localStorage.setItem('hackymetagen_preserve_extension', JSON.stringify(preserveExtension)); }, [preserveExtension]);
+  useEffect(() => { localStorage.setItem('hackymetagen_use_backend', JSON.stringify(useBackend)); }, [useBackend]);
   
   useEffect(() => { csvExtensionRef.current = csvExtension; }, [csvExtension]);
   useEffect(() => { preserveExtensionRef.current = preserveExtension; }, [preserveExtension]);
   useEffect(() => { filesRef.current = files; }, [files]);
   useEffect(() => { apiKeyRef.current = userApiKey; }, [userApiKey]);
+  useEffect(() => { useBackendRef.current = useBackend; }, [useBackend]);
 
   useEffect(() => {
     const savedKey = localStorage.getItem('hackymetagen_api_key');
@@ -195,7 +205,6 @@ const HackyMetaGenApp = () => {
     }
   };
 
-  // Define handler explicitly to avoid ReferenceError
   const handleToggleTheme = () => {
     setTheme(prev => prev === 'light' ? 'dark' : 'light');
   };
@@ -373,6 +382,8 @@ const HackyMetaGenApp = () => {
   // --- API Interaction ---
   const performGeneration = async (fileObj) => {
     const activeKey = apiKeyRef.current || localStorage.getItem('hackymetagen_api_key') || envApiKey;
+    const isUsingBackend = useBackendRef.current;
+    
     let mimeType = '';
     let base64Data = null;
     const ext = fileObj.file.name.split('.').pop().toLowerCase();
@@ -404,12 +415,10 @@ const HackyMetaGenApp = () => {
           reader.onerror = () => reject(new Error("File reading error"));
           reader.readAsDataURL(fileObj.file);
         });
-
-        // --- STRICT MIME TYPE DETECTION FIX ---
-        // Force mapped supported types if browser gives us garbage
+        
+        // Mime Type fallback
         const supportedMimes = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'];
         let detectedMime = fileObj.file.type;
-        
         if (!detectedMime || detectedMime === '' || detectedMime === 'application/octet-stream' || !supportedMimes.includes(detectedMime)) {
              if (['jpg', 'jpeg'].includes(ext)) mimeType = 'image/jpeg';
              else if (ext === 'png') mimeType = 'image/png';
@@ -421,63 +430,87 @@ const HackyMetaGenApp = () => {
         }
     }
 
-    const categoriesString = ADOBE_CATEGORIES.map(c => `${c.id}. ${c.name}`).join('\n');
-    const systemPrompt = `
-      You are Hacky MetaGen 3.6, a senior SEO expert for Adobe Stock.
-      Your goal is to generate metadata for this ${fileObj.type} to maximize discoverability.
-      ${isVideo ? "Note: The input provided is a sequence of 5 frames extracted from the video to represent the WHOLE video action/story." : ""}
-      STRICT RULES:
-      1. **Title**: 100-125 characters. Natural, readable, descriptive. Include high-value keywords. NO keyword stuffing.
-      2. **Keywords**: Generate EXACTLY 49 keywords. Comma-separated string.
-         - **CRITICAL:** Do NOT generate more than 49 keywords. Stop exactly at 49.
-         **ADOBE STOCK RANKING OPTIMIZATION (CRITICAL):**
-         - **The first 5-10 keywords MUST be the most impactful, highly relevant, and descriptive terms.** This primarily determines search ranking.
-         - Start with the absolute main subject, core concept, and primary visual elements.
-         - Do NOT start with generic terms (like "vector", "illustration", "background") unless they are the primary intent.
-         **DISTRIBUTION REQUIREMENTS (After the top 10 prioritized keywords):**
-         - **Short-tail (1-2 words)**: ~12-13 keywords (25-30%)
-         - **Mid-tail (2-3 words)**: ~21-22 keywords (40-45%)
-         - **Long-tail (4+ words)**: ~15 keywords (30%)
-         **CONTENT RULES:**
-         - NO brand names, trademarks, or personal names.
-         - Describe the subject, style, mood, lighting, and concept.
-      3. **Category**: Choose the single most appropriate category ID (1-21) from the list below:
-      ${categoriesString}
-      4. **Approval Prediction**: Act as a strict Adobe Stock reviewer. Analyze the image for technical issues (artifacts, noise, blur, over-filtering, trademarks/logos), and Composition.
-         - Status: "Accepted" or "Rejected".
-         - Reason: If rejected, give a very short reason (e.g., "Artifacts present", "Visible Logo", "Poor Focus"). If accepted, leave empty or "Good quality".
-      OUTPUT FORMAT (JSON ONLY):
-      {
-        "title": "string",
-        "keywords": "string (comma separated)",
-        "category_id": integer,
-        "approval_status": "Accepted" or "Rejected",
-        "approval_reason": "string"
-      }
-    `;
-
-    const contentParts = [{ text: systemPrompt }];
-    if (isVideo && Array.isArray(base64Data)) {
-      base64Data.forEach(frameData => {
-        contentParts.push({ inlineData: { mimeType: mimeType, data: frameData } });
-      });
-    } else {
-      contentParts.push({ inlineData: { mimeType: mimeType, data: base64Data } });
-    }
-
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 60000); 
 
     try {
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${activeKey}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                contents: [{ parts: contentParts }],
-                generationConfig: { responseMimeType: "application/json" }
-            }),
-            signal: controller.signal
-        });
+        let response;
+        const categoriesString = ADOBE_CATEGORIES.map(c => `${c.id}. ${c.name}`).join('\n');
+        
+        if (isUsingBackend) {
+             // 1. BACKEND MODE
+             // We send the raw data to the backend, which holds the prompt logic
+             const payload = {
+                apiKey: activeKey,
+                mimeType: mimeType,
+                data: base64Data, // Single string or array
+                fileType: fileObj.type,
+                isVideo: isVideo
+            };
+            
+            response = await fetch(`/api/generate`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+                signal: controller.signal
+            });
+
+        } else {
+            // 2. DIRECT MODE
+            // We construct the prompt here and send to Google directly
+            const systemPrompt = `
+              You are Hacky MetaGen 3.6, a senior SEO expert for Adobe Stock.
+              Your goal is to generate metadata for this ${fileObj.type} to maximize discoverability.
+              ${isVideo ? "Note: The input provided is a sequence of 5 frames extracted from the video to represent the WHOLE video action/story." : ""}
+              STRICT RULES:
+              1. **Title**: 100-125 characters. Natural, readable, descriptive. Include high-value keywords. NO keyword stuffing.
+              2. **Keywords**: Generate EXACTLY 49 keywords. Comma-separated string.
+                 - **CRITICAL:** Do NOT generate more than 49 keywords. Stop exactly at 49.
+                 **ADOBE STOCK RANKING OPTIMIZATION (CRITICAL):**
+                 - **The first 5-10 keywords MUST be the most impactful, highly relevant, and descriptive terms.** This primarily determines search ranking.
+                 - Start with the absolute main subject, core concept, and primary visual elements.
+                 - Do NOT start with generic terms (like "vector", "illustration", "background") unless they are the primary intent.
+                 **DISTRIBUTION REQUIREMENTS (After the top 10 prioritized keywords):**
+                 - **Short-tail (1-2 words)**: ~12-13 keywords (25-30%)
+                 - **Mid-tail (2-3 words)**: ~21-22 keywords (40-45%)
+                 - **Long-tail (4+ words)**: ~15 keywords (30%)
+                 **CONTENT RULES:**
+                 - NO brand names, trademarks, or personal names.
+                 - Describe the subject, style, mood, lighting, and concept.
+              3. **Category**: Choose the single most appropriate category ID (1-21) from the list below:
+              ${categoriesString}
+              4. **Approval Prediction**: Act as a strict Adobe Stock reviewer. Analyze the image for technical issues (artifacts, noise, blur, over-filtering, trademarks/logos), and Composition.
+                 - Status: "Accepted" or "Rejected".
+                 - Reason: If rejected, give a very short reason (e.g., "Artifacts present", "Visible Logo", "Poor Focus"). If accepted, leave empty or "Good quality".
+              OUTPUT FORMAT (JSON ONLY):
+              {
+                "title": "string",
+                "keywords": "string (comma separated)",
+                "category_id": integer,
+                "approval_status": "Accepted" or "Rejected",
+                "approval_reason": "string"
+              }
+            `;
+
+            const contentParts = [{ text: systemPrompt }];
+            if (isVideo && Array.isArray(base64Data)) {
+              base64Data.forEach(frameData => {
+                contentParts.push({ inlineData: { mimeType: mimeType, data: frameData } });
+              });
+            } else {
+              contentParts.push({ inlineData: { mimeType: mimeType, data: base64Data } });
+            }
+
+            response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${activeKey}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    contents: [{ parts: contentParts }],
+                    generationConfig: { responseMimeType: "application/json" }
+                }),
+                signal: controller.signal
+            });
+        }
 
         if (!response.ok) {
             let errorMsg = `API Error: ${response.status} ${response.statusText}`;
@@ -489,6 +522,10 @@ const HackyMetaGenApp = () => {
         }
 
         const data = await response.json();
+        
+        // Handle potentially different response structure if backend returns raw data vs direct
+        // Assuming backend returns same structure as Gemini or pre-processed
+        // The backend code provided earlier returns the raw Gemini response
         if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
         if (!data.candidates || !data.candidates[0]) throw new Error("No candidates returned from AI");
         const candidate = data.candidates[0];
@@ -496,6 +533,7 @@ const HackyMetaGenApp = () => {
         if (!candidate.content?.parts?.[0]) throw new Error("No content generated");
 
         let resultText = candidate.content.parts[0].text;
+        
         const firstBrace = resultText.indexOf('{');
         const lastBrace = resultText.lastIndexOf('}');
         if (firstBrace !== -1 && lastBrace !== -1) {
@@ -907,7 +945,7 @@ const HackyMetaGenApp = () => {
               </div>
               <h3 className="text-xl font-bold mb-2">Unsupported File Type</h3>
               <p className={`mb-6 ${theme === 'dark' ? 'text-slate-300' : 'text-slate-600'}`}>
-                Please re check and remove unsupported file types
+                Please re check and remove unsupported file types. Only Images, Videos, and Vectors are allowed.
               </p>
               <button 
                   onClick={() => setShowUnsupportedError(false)}
@@ -1022,6 +1060,19 @@ const HackyMetaGenApp = () => {
               title="Apply & Save API Key"
             >
               {isVerifying ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+            </button>
+            <button 
+              onClick={() => setUseBackend(!useBackend)}
+              className={`p-2 rounded-lg border transition-colors ${
+                useBackend
+                  ? 'bg-indigo-600 border-indigo-600 text-white' // Active style
+                  : theme === 'dark' 
+                    ? 'border-slate-700 hover:bg-slate-800 text-slate-400' 
+                    : 'border-slate-300 hover:bg-slate-100 text-slate-600'
+              }`}
+              title={useBackend ? "Using Backend Server" : "Using Direct API (Client-side)"}
+            >
+              <Server size={14} />
             </button>
             <button 
               onClick={() => setShowTutorial(true)}
