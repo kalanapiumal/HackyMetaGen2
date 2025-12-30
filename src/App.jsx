@@ -946,7 +946,7 @@ const HackyMetaGenApp = () => {
     setDraggedIndex(null);
   };
 
-  const StatCard = ({ icon, label, value, accent }) => {
+const StatCard = ({ icon, label, value, accent }) => {
   const accents = {
     blue: 'text-blue-400 bg-blue-500/10',
     green: 'text-green-400 bg-green-500/10',
@@ -956,15 +956,26 @@ const HackyMetaGenApp = () => {
   };
 
   return (
-    <div className="flex items-center gap-4 px-4 py-3 rounded-xl border bg-slate-800/60 border-slate-700 min-w-[170px]">
-      <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${accents[accent]}`}>
-        {icon}
+    <div
+      className="
+        flex items-center gap-3
+        px-3 py-2
+        rounded-lg border
+        bg-slate-800/60 border-slate-700
+        flex-1 min-w-0
+      "
+    >
+      <div
+        className={`w-8 h-8 rounded-md flex items-center justify-center ${accents[accent]}`}
+      >
+        {React.cloneElement(icon, { size: 14 })}
       </div>
-      <div className="flex flex-col">
-        <span className="text-[10px] uppercase tracking-wider text-slate-400">
+
+      <div className="flex flex-col leading-tight">
+        <span className="text-[9px] uppercase tracking-wider text-slate-400">
           {label}
         </span>
-        <span className="text-2xl font-bold text-white">
+        <span className="text-lg font-semibold text-white">
           {value}
         </span>
       </div>
@@ -1558,7 +1569,7 @@ const HackyMetaGenApp = () => {
       </p>
 {/* FILE STATISTICS CARDS */}
 {files.length > 0 && (
-  <div className="mt-4 flex gap-4 overflow-x-auto pb-2">
+  <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
 
     <StatCard
       label="Total Files"
