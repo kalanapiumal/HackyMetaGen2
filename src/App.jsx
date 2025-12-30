@@ -26,11 +26,14 @@ import {
   AlertTriangle,
   FileText,
   Shield,
-  Activity
+  Activity,
+  Scale,
+  ZapOff
 } from 'lucide-react';
 
 /**
  * Hacky MetaGen 3.7 - Adobe Stock Metadata Generator
+ * Built with React + Tailwind CSS + Gemini API
  */
 
 // --- Constants ---
@@ -58,20 +61,30 @@ const LEGAL_CONTENT = {
     icon: <AlertTriangle size={24} className="text-amber-500" />,
     content: (
       <div className="space-y-4 text-left">
-        <p><strong>1. No Affiliation:</strong> Independent tool, not connected with Adobe Inc.</p>
-        <p><strong>2. AI Prediction Accuracy:</strong> This is an estimation only and does not guarantee acceptance.</p>
+        <p><strong>1. No Affiliation:</strong> Hacky MetaGen is an independent tool and is NOT affiliated with Adobe Inc.</p>
+        <p><strong>2. AI Accuracy:</strong> Prediction results are estimations and do not guarantee acceptance.</p>
       </div>
     )
   },
   privacy: {
     title: "Privacy Policy",
     icon: <Shield size={24} className="text-green-500" />,
-    content: <p>Data is processed in-browser. Keys are stored in local storage.</p>
+    content: (
+      <div className="space-y-4 text-left">
+        <p><strong>1. Data:</strong> Images are processed in your browser memory. We do not store your assets.</p>
+        <p><strong>2. Keys:</strong> API keys are stored in your browser's local storage only.</p>
+      </div>
+    )
   },
   terms: {
     title: "Terms of Service",
     icon: <Scale size={24} className="text-blue-500" />,
-    content: <p>Acceptance of terms required for use.</p>
+    content: (
+      <div className="space-y-4 text-left">
+        <p><strong>1. Use:</strong> You agree to use the service for legal stock metadata generation only.</p>
+        <p><strong>2. Rights:</strong> You retain all ownership of your uploaded content.</p>
+      </div>
+    )
   }
 };
 
@@ -132,7 +145,6 @@ const HackyMetaGenApp = () => {
   const [showUnsupportedError, setShowUnsupportedError] = useState(false); 
   const [activeLegalModal, setActiveLegalModal] = useState(null); 
   const [isVerifying, setIsVerifying] = useState(false); 
-  const envApiKey = ""; 
 
   // UI State
   const [isGlobalDragging, setIsGlobalDragging] = useState(false);
@@ -255,7 +267,7 @@ const HackyMetaGenApp = () => {
 
   const updateFileKeywords = (fileId, newKeywordsString) => {
     const kwArray = newKeywordsString.split(',').map(k => k.trim()).filter(k => k);
-    const stats = {
+    const kwStats = {
       short: kwArray.filter(k => k.split(' ').length <= 2).length,
       mid: kwArray.filter(k => k.split(' ').length === 3).length,
       long: kwArray.filter(k => k.split(' ').length >= 4).length,
@@ -264,7 +276,7 @@ const HackyMetaGenApp = () => {
     setFiles(prev => prev.map(f => f.id === fileId ? {
         ...f,
         metadata: { ...f.metadata, keywords: newKeywordsString },
-        keywordAnalysis: stats
+        keywordAnalysis: kwStats
     } : f));
   };
 
@@ -296,15 +308,13 @@ const HackyMetaGenApp = () => {
         };
         capture();
       };
-      video.onerror = () => reject(new Error("Video error"));
+      video.onerror = () => reject(new Error("Video parsing failed"));
     });
   };
 
   const performGeneration = async (fileObj) => {
     const isCanvasMode = useCanvasKeyRef.current;
-    const isUsingBackend = !isCanvasMode; 
     let activeKey = apiKeyRef.current || localStorage.getItem('hackymetagen_api_key');
-    if (isCanvasMode) activeKey = activeKey || envApiKey;
 
     let mimeType = 'image/jpeg';
     let base64Data = null;
@@ -322,7 +332,7 @@ const HackyMetaGenApp = () => {
     }
 
     const categoriesString = ADOBE_CATEGORIES.map(c => `${c.id}. ${c.name}`).join('\n');
-    const systemPrompt = `You are an Adobe Stock SEO expert. Generate JSON: {title(100-125 chars), keywords(exactly 49, comma separated, prioritized), category_id(1-21), approval_status("Accepted"/"Rejected"), approval_reason}. Categories: ${categoriesString}`;
+    const systemPrompt = `You are an Adobe Stock metadata expert. Output ONLY JSON: { "title": "100-125 chars descriptive", "keywords": "49 comma separated keywords", "category_id": integer, "approval_status": "Accepted" or "Rejected", "approval_reason": "string" }. Categories: ${categoriesString}`;
 
     const contentParts = [{ text: systemPrompt }];
     if (isVideo) {
@@ -331,7 +341,7 @@ const HackyMetaGenApp = () => {
       contentParts.push({ inlineData: { mimeType, data: base64Data } });
     }
 
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${activeKey}`, {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${activeKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -340,9 +350,11 @@ const HackyMetaGenApp = () => {
         })
     });
 
-    if (!response.ok) throw new Error("API Request Failed");
+    if (!response.ok) throw new Error("API call failed");
     const data = await response.json();
-    return JSON.parse(data.candidates[0].content.parts[0].text);
+    let textResult = data.candidates[0].content.parts[0].text;
+    textResult = textResult.replace(/```json/g, '').replace(/```/g, '').trim();
+    return JSON.parse(textResult);
   };
 
   const runBatchGeneration = async (filesToProcess) => {
@@ -384,8 +396,6 @@ const HackyMetaGenApp = () => {
     if (isAutoGenerate) runBatchGeneration(newFiles);
   }, [isAutoGenerate, useAiCategory]);
 
-  const removeFile = (id, e) => { e.stopPropagation(); setFiles(prev => prev.filter(f => f.id !== id)); };
-
   const handleExportCSV = () => {
     const csvHeader = "Filename,Title,Keywords,Category\n";
     const rows = files.filter(f => f.status === 'complete').map(f => {
@@ -394,12 +404,7 @@ const HackyMetaGenApp = () => {
     const blob = new Blob([csvHeader + rows], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = `adobe_stock_export.csv`; a.click();
-  };
-
-  const copyToClipboard = (text, id = null) => {
-    navigator.clipboard.writeText(text);
-    if (id) { setCopiedId(id); setTimeout(() => setCopiedId(null), 1500); }
+    a.href = url; a.download = `stock_metadata.csv`; a.click();
   };
 
   return (
@@ -411,7 +416,6 @@ const HackyMetaGenApp = () => {
           <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white font-bold text-lg">H</div>
           <h1 className="font-bold text-lg hidden sm:inline">Hacky <span className="text-indigo-400">MetaGen</span></h1>
         </div>
-        
         <div className="flex items-center gap-4">
           <input 
             type="password" 
@@ -440,55 +444,62 @@ const HackyMetaGenApp = () => {
         )}
 
         <div className="flex flex-col lg:flex-row gap-6">
-          {/* LEFT: Upload & List */}
+          {/* LEFT COLUMN */}
           <div className="w-full lg:w-1/3 flex flex-col gap-4">
             <div 
               onClick={() => fileInputRef.current.click()}
-              className={`p-12 border-2 border-dashed rounded-xl flex flex-col items-center cursor-pointer hover:bg-indigo-500/5 transition-all ${theme === 'dark' ? 'border-slate-700' : 'border-slate-300'}`}
+              className={`p-10 border-2 border-dashed rounded-xl flex flex-col items-center cursor-pointer hover:bg-indigo-500/5 transition-all ${theme === 'dark' ? 'border-slate-700' : 'border-slate-300'}`}
             >
               <input type="file" multiple className="hidden" ref={fileInputRef} onChange={(e) => processUploadedFiles(Array.from(e.target.files))} />
               <Upload size={32} className="text-indigo-500 mb-2" />
-              <p className="font-medium">Click or Drop Assets</p>
+              <p className="font-medium text-sm">Drop assets here</p>
             </div>
 
-            <div className={`flex-1 overflow-y-auto min-h-[400px] rounded-xl border p-2 space-y-2 ${theme === 'dark' ? 'bg-slate-800/30 border-slate-800' : 'bg-white'}`}>
+            <div className={`flex-1 overflow-y-auto min-h-[300px] rounded-xl border p-2 space-y-2 ${theme === 'dark' ? 'bg-slate-800/30 border-slate-800' : 'bg-white'}`}>
               {files.map(f => (
                 <div key={f.id} onClick={() => setSelectedFileId(f.id)} className={`p-2 rounded-lg flex items-center gap-3 cursor-pointer border ${selectedFileId === f.id ? 'border-indigo-500 bg-indigo-500/10' : 'border-transparent'}`}>
-                  <img src={f.preview} className="w-12 h-12 rounded object-cover" />
+                  <img src={f.preview} className="w-10 h-10 rounded object-cover shrink-0" alt="thumb" />
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate">{f.name}</p>
-                    <span className="text-[10px] uppercase font-bold opacity-60">{f.status}</span>
+                    <p className="text-xs font-medium truncate">{f.name}</p>
+                    <span className="text-[9px] uppercase font-bold opacity-60">{f.status}</span>
                   </div>
-                  <button onClick={(e) => removeFile(f.id, e)} className="text-slate-500 hover:text-red-500"><Trash2 size={14}/></button>
+                  <button onClick={(e) => { e.stopPropagation(); setFiles(prev => prev.filter(file => file.id !== f.id)); }} className="text-slate-500 hover:text-red-500">
+                    <Trash2 size={12}/>
+                  </button>
                 </div>
               ))}
             </div>
             
             <button onClick={handleExportCSV} className="w-full py-3 bg-green-600 text-white rounded-xl font-bold flex items-center justify-center gap-2">
-              <Download size={18}/> Export Adobe CSV
+              <Download size={18}/> Export CSV
             </button>
           </div>
 
-          {/* RIGHT: Editor */}
+          {/* RIGHT COLUMN: EDITOR */}
           <div className={`flex-1 rounded-xl border p-6 ${theme === 'dark' ? 'bg-slate-800/30 border-slate-800' : 'bg-white'}`}>
             {selectedFileId ? (
               <div className="space-y-6">
-                <img src={files.find(f => f.id === selectedFileId)?.preview} className="h-48 rounded-lg mx-auto shadow-lg" />
+                <div className="aspect-video max-h-48 bg-black/20 rounded-lg overflow-hidden flex items-center justify-center">
+                   <img src={files.find(f => f.id === selectedFileId)?.preview} className="max-h-full" alt="preview" />
+                </div>
                 <div className="space-y-2">
-                  <label className="text-xs font-bold text-slate-500 uppercase">Title</label>
+                  <label className="text-xs font-bold text-slate-500">TITLE</label>
                   <textarea 
                     value={files.find(f => f.id === selectedFileId)?.metadata.title}
-                    onChange={(e) => setFiles(prev => prev.map(f => f.id === selectedFileId ? {...f, metadata: {...f.metadata, title: e.target.value}} : f))}
-                    className={`w-full p-3 rounded-lg border bg-transparent ${theme === 'dark' ? 'border-slate-700' : ''}`}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setFiles(prev => prev.map(f => f.id === selectedFileId ? {...f, metadata: {...f.metadata, title: val}} : f));
+                    }}
+                    className={`w-full p-3 rounded-lg border bg-transparent text-sm ${theme === 'dark' ? 'border-slate-700' : ''}`}
                     rows={2}
                   />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-xs font-bold text-slate-500 uppercase">Keywords</label>
-                  <div className={`w-full p-4 rounded-lg border min-h-[100px] ${theme === 'dark' ? 'border-slate-700 bg-slate-900/40' : 'bg-slate-50'}`}>
+                  <label className="text-xs font-bold text-slate-500">KEYWORDS ({files.find(f => f.id === selectedFileId)?.metadata.keywords.split(',').length || 0})</label>
+                  <div className={`w-full p-4 rounded-lg border min-h-[120px] ${theme === 'dark' ? 'border-slate-700 bg-slate-900/40' : 'bg-slate-50'}`}>
                     <div className="flex flex-wrap gap-2">
                       {files.find(f => f.id === selectedFileId)?.metadata.keywords.split(',').map((kw, i) => (
-                        <span key={i} className="px-2 py-1 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded text-xs">
+                        <span key={i} className="px-2 py-1 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded text-[11px]">
                           {kw.trim()}
                         </span>
                       ))}
@@ -497,18 +508,36 @@ const HackyMetaGenApp = () => {
                 </div>
               </div>
             ) : (
-              <div className="h-full flex flex-col items-center justify-center opacity-40">
-                <FileImage size={48} />
-                <p>Select a file to edit</p>
+              <div className="h-full flex flex-col items-center justify-center opacity-30">
+                <LayoutGrid size={48} />
+                <p className="mt-2">Select a file from the list</p>
               </div>
             )}
           </div>
         </div>
       </main>
 
-      <footer className="mt-12 py-8 border-t border-slate-800/50 text-center opacity-50 text-xs">
-        <p>© 2025 Hacky MetaGen • Built for Adobe Stock Contributors</p>
+      <footer className="mt-12 py-8 border-t border-slate-800/50 text-center opacity-40 text-[10px]">
+        <div className="flex justify-center gap-4 mb-2">
+           <button onClick={() => setActiveLegalModal('disclaimer')}>Disclaimer</button>
+           <button onClick={() => setActiveLegalModal('privacy')}>Privacy</button>
+           <button onClick={() => setActiveLegalModal('terms')}>Terms</button>
+        </div>
+        <p>© 2025 Hacky MetaGen • Non-official Adobe Stock tool</p>
       </footer>
+
+      {/* MODALS */}
+      {activeLegalModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+           <div className={`max-w-md w-full p-6 rounded-2xl ${theme === 'dark' ? 'bg-slate-800' : 'bg-white'}`}>
+              <div className="flex justify-between items-center mb-4">
+                 <h3 className="font-bold">{LEGAL_CONTENT[activeLegalModal].title}</h3>
+                 <button onClick={() => setActiveLegalModal(null)}><X size={20}/></button>
+              </div>
+              <div className="text-sm opacity-80">{LEGAL_CONTENT[activeLegalModal].content}</div>
+           </div>
+        </div>
+      )}
     </div>
   );
 };
