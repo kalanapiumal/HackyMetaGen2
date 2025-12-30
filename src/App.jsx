@@ -1334,31 +1334,38 @@ const HackyMetaGenApp = () => {
             </button>
           )}
 
-          {/* Auto Generate Toggle - Always Visible */}
-          <button
-            onClick={() => setIsAutoGenerate(!isAutoGenerate)}
-            className={`w-full py-2.5 px-4 rounded-xl border flex items-center justify-center gap-2 font-medium transition-all ${
-              isAutoGenerate 
-                ? 'bg-green-600 border-green-600 text-white shadow-lg shadow-green-500/20' 
-                : theme === 'dark' ? 'bg-slate-800 border-slate-700 text-slate-400' : 'bg-white border-slate-300 text-slate-500'
-            }`}
-          >
-            {isAutoGenerate ? <Zap size={18}/> : <ZapOff size={18} />}
-            {isAutoGenerate ? 'Auto Generate: ON' : 'Auto Generate: OFF'}
-          </button>
-          
-          {/* Category Mode Toggle - Always Visible */}
-          <button
-            onClick={toggleCategoryMode}
-            className={`w-full py-2.5 px-4 rounded-xl border flex items-center justify-center gap-2 font-medium transition-all ${
-              useAiCategory
-                ? 'bg-green-600 border-green-600 text-white shadow-lg shadow-green-500/20' 
-                : 'bg-blue-100 border-blue-200 text-blue-700'
-            }`}
-          >
-            {useAiCategory ? <Brain size={18} /> : <LayoutGrid size={18} />}
-            {useAiCategory ? 'AI Category: ON' : 'Default Category: ON'}
-          </button>
+          {/* Auto Generate & Category Mode — Side by Side */}
+<div className="flex gap-2">
+  
+  {/* Auto Generate (LEFT) */}
+  <button
+    onClick={() => setIsAutoGenerate(!isAutoGenerate)}
+    className={`flex-1 py-2.5 px-4 rounded-xl border flex items-center justify-center gap-2 font-medium transition-all ${
+      isAutoGenerate
+        ? 'bg-green-600 border-green-600 text-white shadow-lg shadow-green-500/20'
+        : theme === 'dark'
+          ? 'bg-slate-800 border-slate-700 text-slate-400'
+          : 'bg-white border-slate-300 text-slate-500'
+    }`}
+  >
+    {isAutoGenerate ? <Zap size={18}/> : <ZapOff size={18} />}
+    Auto Generate
+  </button>
+
+  {/* Category Mode (RIGHT) */}
+  <button
+    onClick={toggleCategoryMode}
+    className={`flex-1 py-2.5 px-4 rounded-xl border flex items-center justify-center gap-2 font-medium transition-all ${
+      useAiCategory
+        ? 'bg-green-600 border-green-600 text-white shadow-lg shadow-green-500/20'
+        : 'bg-blue-100 border-blue-200 text-blue-700'
+    }`}
+  >
+    {useAiCategory ? <Brain size={18} /> : <LayoutGrid size={18} />}
+    {useAiCategory ? 'AI Category' : 'Default Category'}
+  </button>
+
+</div>
           
           {/* Replace All Filename Extensions in CSV */}
           <div className="mt-1">
