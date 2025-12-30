@@ -1334,33 +1334,36 @@ const HackyMetaGenApp = () => {
             </button>
           )}
 
-{/* Auto Generate & Default Category */}
-<div className="flex gap-3 mt-1">
+{/* Auto Generate & Default Category (Flat Compact Style) */}
+<div className="flex gap-2 mt-1">
 
   {/* Auto Generate */}
   <button
     onClick={() => setIsAutoGenerate(!isAutoGenerate)}
-    className="flex-1 h-11 px-4 rounded-full flex items-center justify-center gap-2
-               text-sm font-semibold whitespace-nowrap
+    className="flex-1 h-10 px-3 rounded-lg
+               flex items-center justify-center gap-2
+               text-xs font-medium whitespace-nowrap
                bg-green-600 hover:bg-green-700 text-white
-               transition-all"
+               transition-colors"
   >
-    <Zap size={15} />
+    <Zap size={14} className="relative top-[1px]" />
     Auto Generate
   </button>
 
   {/* Default / AI Category */}
   <button
     onClick={toggleCategoryMode}
-    className={`flex-1 h-11 px-4 rounded-full flex items-center justify-center gap-2
-                text-sm font-semibold whitespace-nowrap transition-all
+    className={`flex-1 h-10 px-3 rounded-lg
+                flex items-center justify-center gap-2
+                text-xs font-medium whitespace-nowrap
+                transition-colors
                 ${
                   useAiCategory
                     ? 'bg-green-600 hover:bg-green-700 text-white'
                     : 'bg-slate-200 hover:bg-slate-300 text-slate-800'
                 }`}
   >
-    <LayoutGrid size={15} />
+    <LayoutGrid size={14} className="relative top-[1px]" />
     {useAiCategory ? 'AI Category' : 'Default Category'}
   </button>
 
