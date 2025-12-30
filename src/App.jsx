@@ -1531,95 +1531,62 @@ const HackyMetaGenApp = () => {
         Review your metadata here
       </p>
 
-      {/* ✅ FILE STATISTICS PANEL — NOW CONDITIONAL */}
-      {files.length > 0 && (
-        <div
-          className={`mt-4 grid grid-cols-3 gap-4 p-4 rounded-xl border ${
-            theme === 'dark'
-              ? 'bg-slate-800/50 border-slate-700'
-              : 'bg-slate-50 border-slate-200'
-          }`}
-        >
-          {/* Total Files */}
-          <div className="flex items-center gap-3">
-            <div
-              className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-                theme === 'dark' ? 'bg-blue-500/20' : 'bg-blue-100'
-              }`}
-            >
-              <FileText size={20} className="text-blue-500" />
-            </div>
-            <div>
-              <p
-                className={`text-xs font-medium ${
-                  theme === 'dark' ? 'text-slate-400' : 'text-slate-500'
-                }`}
-              >
-                Total Files
-              </p>
-              <p className="text-2xl font-bold">{files.length}</p>
-            </div>
-          </div>
+{/* File Statistics Panel */}
+{files.length > 0 && (
+  <div className="mt-4 flex gap-4 overflow-x-auto pb-2">
+    
+    <StatCard
+      label="Total Files"
+      value={files.length}
+      accent="blue"
+      icon={<FileText size={18} />}
+    />
 
-          {/* Likely Accepted */}
-          <div className="flex items-center gap-3">
-            <div
-              className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-                theme === 'dark' ? 'bg-green-500/20' : 'bg-green-100'
-              }`}
-            >
-              <ShieldCheck size={20} className="text-green-500" />
-            </div>
-            <div>
-              <p
-                className={`text-xs font-medium ${
-                  theme === 'dark' ? 'text-slate-400' : 'text-slate-500'
-                }`}
-              >
-                Likely Accepted
-              </p>
-              <p className="text-2xl font-bold text-green-500">
-                {
-                  files.filter(
-                    f =>
-                      f.status === 'complete' &&
-                      f.metadata.approval_status !== 'Rejected'
-                  ).length
-                }
-              </p>
-            </div>
-          </div>
+    <StatCard
+      label="Completed"
+      value={files.filter(f => f.status === 'complete').length}
+      accent={allFilesComplete ? 'green' : 'blue'}
+      icon={<Check size={18} />}
+    />
 
-          {/* Likely Rejected */}
-          <div className="flex items-center gap-3">
-            <div
-              className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-                theme === 'dark' ? 'bg-red-500/20' : 'bg-red-100'
-              }`}
-            >
-              <ShieldAlert size={20} className="text-red-500" />
-            </div>
-            <div>
-              <p
-                className={`text-xs font-medium ${
-                  theme === 'dark' ? 'text-slate-400' : 'text-slate-500'
-                }`}
-              >
-                Likely Rejected
-              </p>
-              <p className="text-2xl font-bold text-red-500">
-                {
-                  files.filter(
-                    f =>
-                      f.status === 'complete' &&
-                      f.metadata.approval_status === 'Rejected'
-                  ).length
-                }
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
+    <StatCard
+      label="Processing"
+      value={files.filter(f => f.status === 'processing').length}
+      accent="yellow"
+      icon={<Zap size={18} />}
+    />
+
+    <StatCard
+      label="Likely Accepted"
+      value={files.filter(
+        f =>
+          f.status === 'complete' &&
+          f.metadata.approval_status !== 'Rejected'
+      ).length}
+      accent="green"
+      icon={<ShieldCheck size={18} />}
+    />
+
+    <StatCard
+      label="Likely Rejected"
+      value={files.filter(
+        f =>
+          f.status === 'complete' &&
+          f.metadata.approval_status === 'Rejected'
+      ).length}
+      accent="orange"
+      icon={<ShieldAlert size={18} />}
+    />
+
+    <StatCard
+      label="Errors"
+      value={files.filter(f => f.status === 'error').length}
+      accent="red"
+      icon={<AlertCircle size={18} />}
+    />
+
+  </div>
+)}
     </div>
               
               <div className="flex-1 lg:overflow-y-auto pr-2 pb-24">
