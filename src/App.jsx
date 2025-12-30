@@ -945,7 +945,7 @@ const HackyMetaGenApp = () => {
     updateFileKeywords(activeFile.id, updatedKeywordsString);
     setDraggedIndex(null);
   };
-  
+
   const StatCard = ({ icon, label, value, accent }) => {
   const accents = {
     blue: 'text-blue-400 bg-blue-500/10',
@@ -971,7 +971,6 @@ const HackyMetaGenApp = () => {
     </div>
   );
 };
-
   
   // --- Main Render Return ---
   const activeFile = files.find(f => f.id === selectedFileId);
@@ -1550,7 +1549,14 @@ const HackyMetaGenApp = () => {
           /* BATCH REVIEW VIEW PART */
           /* ======================= */}
 
-{/* File Statistics Panel */}
+{viewMode === 'batch' ? (
+  <div className="h-full flex flex-col">
+    <div className="mb-6">
+      <h3 className="text-2xl font-bold">Multi-File Review</h3>
+      <p className={`text-sm ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>
+        Review your metadata here
+      </p>
+{/* FILE STATISTICS CARDS */}
 {files.length > 0 && (
   <div className="mt-4 flex gap-4 overflow-x-auto pb-2">
 
@@ -1578,7 +1584,9 @@ const HackyMetaGenApp = () => {
     <StatCard
       label="Likely Accepted"
       value={files.filter(
-        f => f.status === 'complete' && f.metadata.approval_status !== 'Rejected'
+        f =>
+          f.status === 'complete' &&
+          f.metadata.approval_status !== 'Rejected'
       ).length}
       accent="green"
       icon={<ShieldCheck size={18} />}
@@ -1587,7 +1595,9 @@ const HackyMetaGenApp = () => {
     <StatCard
       label="Likely Rejected"
       value={files.filter(
-        f => f.status === 'complete' && f.metadata.approval_status === 'Rejected'
+        f =>
+          f.status === 'complete' &&
+          f.metadata.approval_status === 'Rejected'
       ).length}
       accent="orange"
       icon={<ShieldAlert size={18} />}
@@ -1602,7 +1612,9 @@ const HackyMetaGenApp = () => {
 
   </div>
 )}
-                        
+  
+    </div>
+              
               <div className="flex-1 lg:overflow-y-auto pr-2 pb-24">
                 {files.length === 0 ? (
                   <div 
