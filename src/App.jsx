@@ -1509,13 +1509,10 @@ const HackyMetaGenApp = () => {
         {/* RIGHT COLUMN: View Switcher (Editor OR Batch Review) */}
         <div className={`w-full ${viewMode === 'batch' ? 'lg:w-3/4' : 'lg:w-2/3'} flex flex-col rounded-xl transition-all duration-300 h-auto lg:h-full lg:overflow-hidden`}>
           
-// ⚠️ FULL FILE — ONLY CHANGE IS THE CONDITIONAL STATS PANEL
 
-/* --- SNIPPED IMPORTS & CODE ABOVE ARE IDENTICAL --- */
-
-/* ======================= */
-/* BATCH REVIEW VIEW PART */
-/* ======================= */
+          {/* ======================= */
+          /* BATCH REVIEW VIEW PART */
+          /* ======================= */}
 
 {viewMode === 'batch' ? (
   <div className="h-full flex flex-col">
