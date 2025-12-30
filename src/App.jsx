@@ -26,6 +26,7 @@ import {
   ShieldCheck,
   ShieldAlert,
   AlertTriangle,
+  Server,
   Sparkles
 } from 'lucide-react';
 
@@ -126,11 +127,11 @@ const HackyMetaGenApp = () => {
   const apiKeyRef = useRef(userApiKey); 
   const useCanvasKeyRef = useRef(useCanvasKey);
 
-  // Defined as mixed content array
+  // Features List - Using direct React elements to avoid object error
   const features = [
-    { type: 'text', content: "Video Metadata Support" },
-    { type: 'text', content: "CSV FileName Extension Selection Support" },
-    { type: 'jsx', content: "AI Approval Result Prediction Beta 0.5 Added" }
+    "Video Metadata Support",
+    "CSV FileName Extension Selection Support",
+    <span key="approval">AI Approval Result Prediction <span className="mx-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-500/20 text-blue-400 border border-blue-500/30 align-middle">Beta 0.5</span> Added</span>
   ];
 
   // 2. Effects
@@ -490,7 +491,6 @@ const HackyMetaGenApp = () => {
         let response;
         if (isUsingBackend) {
              // Backend Mode: Send data to /api/generate
-             // The backend will handle the interaction with Gemini
              const payload = {
                 apiKey: activeKey,
                 mimeType: mimeType,
@@ -499,9 +499,6 @@ const HackyMetaGenApp = () => {
                 isVideo: isVideo
             };
             
-            // NOTE: In the preview environment here, there is NO backend running.
-            // If you test here with "Sparkles OFF" (Backend ON), it will fail with 404/500.
-            // But this code is correct for your Vercel deployment with api/generate.js
             response = await fetch(`/api/generate`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -655,25 +652,15 @@ const HackyMetaGenApp = () => {
 
   const processUploadedFiles = useCallback(async (uploadedFiles) => {
     const isCanvasMode = useCanvasKeyRef.current;
-    // For direct generation without a backend in canvas:
-    // If not in canvas mode, we usually need an API key. 
-    // BUT since we removed the backend toggle logic previously, 
-    // we rely on useCanvasKeyRef to switch.
-    // If useCanvasKey (Sparkles ON) -> We expect embedded key OR user key.
-    // If !useCanvasKey (Sparkles OFF) -> We expect user key for backend.
-    
-    let activeKey = apiKeyRef.current || localStorage.getItem('hackymetagen_api_key');
-    if (isCanvasMode) activeKey = activeKey || envApiKey;
+    const activeKey = apiKeyRef.current || localStorage.getItem('hackymetagen_api_key') || (isCanvasMode ? envApiKey : undefined);
 
     if (!activeKey && !isCanvasMode) {
-      // If backend mode but no key provided, warn user (unless backend has key)
-      // Assuming backend needs key passed from client based on previous code.
       setShowTutorial(true);
       if (fileInputRef.current) fileInputRef.current.value = '';
       return;
     }
 
-    // 1. FILTER UNSUPPORTED FILES
+    // 1. STRICTLY BLOCK UNSUPPORTED FILES
     const supportedExtensions = ['jpg', 'jpeg', 'png', 'webp', 'ai', 'eps', 'svg', 'mov', 'mp4', 'avi', 'webm', 'mkv', 'mpg', 'mpeg'];
     let hasUnsupported = false;
     for (const file of uploadedFiles) {
@@ -1077,19 +1064,23 @@ const HackyMetaGenApp = () => {
             >
               {isVerifying ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
             </button>
-            <button 
-              onClick={() => setUseCanvasKey(!useCanvasKey)}
-              className={`p-2 rounded-lg border transition-colors ${
-                useCanvasKey
-                  ? 'bg-purple-600 border-purple-600 text-white' 
-                  : theme === 'dark' 
-                    ? 'border-slate-700 hover:bg-slate-800 text-slate-400' 
-                    : 'border-slate-300 hover:bg-slate-100 text-slate-600'
-              }`}
-              title={useCanvasKey ? "Using Canvas/Embedded Key" : "Using User/Saved Key (Backend)"}
-            >
-              <Sparkles size={14} />
-            </button>
+            
+            {!isKeySaved && (
+              <button 
+                onClick={() => setUseCanvasKey(!useCanvasKey)}
+                className={`p-2 rounded-lg border transition-colors ${
+                  useCanvasKey
+                    ? 'bg-purple-600 border-purple-600 text-white' 
+                    : theme === 'dark' 
+                      ? 'border-slate-700 hover:bg-slate-800 text-slate-400' 
+                      : 'border-slate-300 hover:bg-slate-100 text-slate-600'
+                }`}
+                title={useCanvasKey ? "Using Canvas/Embedded Key" : "Using User/Saved Key (Backend)"}
+              >
+                <Sparkles size={14} />
+              </button>
+            )}
+
             <button 
               onClick={() => setShowTutorial(true)}
               className={`p-2 rounded-lg border transition-colors ${
