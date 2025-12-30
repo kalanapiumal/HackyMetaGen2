@@ -34,7 +34,7 @@ import {
 } from 'lucide-react';
 
 /**
- * Hacky MetaGen 3.6 - Adobe Stock Metadata Generator
+ * Hacky MetaGen 3.7 - Adobe Stock Metadata Generator
  * Built with React + Tailwind CSS + Gemini API
  */
 
@@ -501,7 +501,7 @@ const HackyMetaGenApp = () => {
 
     const categoriesString = ADOBE_CATEGORIES.map(c => `${c.id}. ${c.name}`).join('\n');
     const systemPrompt = `
-      You are Hacky MetaGen 3.6, a senior SEO expert for Adobe Stock.
+      You are Hacky MetaGen 3.7, a senior SEO expert for Adobe Stock.
       Your goal is to generate metadata for this ${fileObj.type} to maximize discoverability.
       ${isVideo ? "Note: The input provided is a sequence of 5 frames extracted from the video to represent the WHOLE video action/story." : ""}
       STRICT RULES:
@@ -1110,7 +1110,7 @@ const HackyMetaGenApp = () => {
             <h1 className="font-bold text-lg tracking-tight hidden sm:inline">
               <span className={theme === 'dark' ? 'text-white' : 'text-slate-900'}>Hacky</span>{' '}
               <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400">MetaGen</span>
-              <span className="text-xs align-top bg-indigo-500/20 text-indigo-500 px-1.5 py-0.5 rounded ml-1">3.6</span>
+              <span className="text-xs align-top bg-indigo-500/20 text-indigo-500 px-1.5 py-0.5 rounded ml-1">3.7</span>
             </h1>
           </div>
         </div>
