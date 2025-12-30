@@ -26,7 +26,8 @@ import {
   ShieldCheck,
   ShieldAlert,
   AlertTriangle,
-  Server
+  Server,
+  Sparkles
 } from 'lucide-react';
 
 /**
@@ -36,7 +37,7 @@ import {
 
 // --- Constants ---
 const MAX_TITLE_LENGTH = 125;
-const MIN_TITLE_LENGTH = 100; 
+const MIN_TITLE_LENGTH = 100; // Soft limit for validation
 const TARGET_KEYWORD_COUNT = 49;
 
 const ADOBE_CATEGORIES = [
@@ -92,13 +93,13 @@ const HackyMetaGenApp = () => {
     return saved !== null ? JSON.parse(saved) : false;
   });
 
-  // Backend Toggle State
-  const [useBackend, setUseBackend] = useState(() => {
-    const saved = localStorage.getItem('hackymetagen_use_backend');
-    return saved !== null ? JSON.parse(saved) : true; 
+  // Canvas/Embedded Key Toggle State (Defaults to false, which implies Backend Mode ON)
+  const [useCanvasKey, setUseCanvasKey] = useState(() => {
+    const saved = localStorage.getItem('hackymetagen_use_canvas_key');
+    return saved !== null ? JSON.parse(saved) : false;
   });
 
-  // API Key State
+  // API Key Handling
   const [userApiKey, setUserApiKey] = useState(''); 
   const [isKeySaved, setIsKeySaved] = useState(false); 
   const [isKeyInvalid, setIsKeyInvalid] = useState(false); 
@@ -107,7 +108,7 @@ const HackyMetaGenApp = () => {
   const [showTutorial, setShowTutorial] = useState(false); 
   const [showUnsupportedError, setShowUnsupportedError] = useState(false); 
   const [isVerifying, setIsVerifying] = useState(false); 
-  const envApiKey = ""; 
+  const envApiKey = ""; // The execution environment provides the key at runtime
 
   // UI State
   const [isGlobalDragging, setIsGlobalDragging] = useState(false);
@@ -124,7 +125,7 @@ const HackyMetaGenApp = () => {
   const preserveExtensionRef = useRef(preserveExtension);
   const filesRef = useRef(files); 
   const apiKeyRef = useRef(userApiKey); 
-  const useBackendRef = useRef(useBackend);
+  const useCanvasKeyRef = useRef(useCanvasKey);
 
   // Defined as mixed content array
   const features = [
@@ -139,13 +140,13 @@ const HackyMetaGenApp = () => {
   useEffect(() => { localStorage.setItem('hackymetagen_use_ai_category', JSON.stringify(useAiCategory)); }, [useAiCategory]);
   useEffect(() => { localStorage.setItem('hackymetagen_csv_extension', csvExtension); }, [csvExtension]);
   useEffect(() => { localStorage.setItem('hackymetagen_preserve_extension', JSON.stringify(preserveExtension)); }, [preserveExtension]);
-  useEffect(() => { localStorage.setItem('hackymetagen_use_backend', JSON.stringify(useBackend)); }, [useBackend]);
+  useEffect(() => { localStorage.setItem('hackymetagen_use_canvas_key', JSON.stringify(useCanvasKey)); }, [useCanvasKey]);
   
   useEffect(() => { csvExtensionRef.current = csvExtension; }, [csvExtension]);
   useEffect(() => { preserveExtensionRef.current = preserveExtension; }, [preserveExtension]);
   useEffect(() => { filesRef.current = files; }, [files]);
   useEffect(() => { apiKeyRef.current = userApiKey; }, [userApiKey]);
-  useEffect(() => { useBackendRef.current = useBackend; }, [useBackend]);
+  useEffect(() => { useCanvasKeyRef.current = useCanvasKey; }, [useCanvasKey]);
 
   useEffect(() => {
     const savedKey = localStorage.getItem('hackymetagen_api_key');
@@ -381,9 +382,18 @@ const HackyMetaGenApp = () => {
 
   // --- API Interaction ---
   const performGeneration = async (fileObj) => {
-    const activeKey = apiKeyRef.current || localStorage.getItem('hackymetagen_api_key') || envApiKey;
-    const isUsingBackend = useBackendRef.current;
+    const isCanvasMode = useCanvasKeyRef.current;
     
+    // Logic: 
+    // Sparkles OFF (useCanvasKey = false) -> Backend Mode -> isUsingBackend = true
+    // Sparkles ON  (useCanvasKey = true)  -> Client Mode  -> isUsingBackend = false
+    const isUsingBackend = !isCanvasMode; 
+
+    let activeKey = apiKeyRef.current || localStorage.getItem('hackymetagen_api_key');
+    if (isCanvasMode) {
+        activeKey = activeKey || envApiKey; 
+    }
+
     let mimeType = '';
     let base64Data = null;
     const ext = fileObj.file.name.split('.').pop().toLowerCase();
@@ -416,9 +426,9 @@ const HackyMetaGenApp = () => {
           reader.readAsDataURL(fileObj.file);
         });
         
-        // Mime Type fallback
         const supportedMimes = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'];
         let detectedMime = fileObj.file.type;
+        
         if (!detectedMime || detectedMime === '' || detectedMime === 'application/octet-stream' || !supportedMimes.includes(detectedMime)) {
              if (['jpg', 'jpeg'].includes(ext)) mimeType = 'image/jpeg';
              else if (ext === 'png') mimeType = 'image/png';
@@ -430,20 +440,61 @@ const HackyMetaGenApp = () => {
         }
     }
 
+    const categoriesString = ADOBE_CATEGORIES.map(c => `${c.id}. ${c.name}`).join('\n');
+    const systemPrompt = `
+      You are Hacky MetaGen 3.6, a senior SEO expert for Adobe Stock.
+      Your goal is to generate metadata for this ${fileObj.type} to maximize discoverability.
+      ${isVideo ? "Note: The input provided is a sequence of 5 frames extracted from the video to represent the WHOLE video action/story." : ""}
+      STRICT RULES:
+      1. **Title**: 100-125 characters. Natural, readable, descriptive. Include high-value keywords. NO keyword stuffing.
+      2. **Keywords**: Generate EXACTLY 49 keywords. Comma-separated string.
+         - **CRITICAL:** Do NOT generate more than 49 keywords. Stop exactly at 49.
+         **ADOBE STOCK RANKING OPTIMIZATION (CRITICAL):**
+         - **The first 5-10 keywords MUST be the most impactful, highly relevant, and descriptive terms.** This primarily determines search ranking.
+         - Start with the absolute main subject, core concept, and primary visual elements.
+         - Do NOT start with generic terms (like "vector", "illustration", "background") unless they are the primary intent.
+         **DISTRIBUTION REQUIREMENTS (After the top 10 prioritized keywords):**
+         - **Short-tail (1-2 words)**: ~12-13 keywords (25-30%)
+         - **Mid-tail (2-3 words)**: ~21-22 keywords (40-45%)
+         - **Long-tail (4+ words)**: ~15 keywords (30%)
+         **CONTENT RULES:**
+         - NO brand names, trademarks, or personal names.
+         - Describe the subject, style, mood, lighting, and concept.
+      3. **Category**: Choose the single most appropriate category ID (1-21) from the list below:
+      ${categoriesString}
+      4. **Approval Prediction**: Act as a strict Adobe Stock reviewer. Analyze the image for technical issues (artifacts, noise, blur, over-filtering, trademarks/logos), and Composition.
+         - Status: "Accepted" or "Rejected".
+         - Reason: If rejected, give a very short reason (e.g., "Artifacts present", "Visible Logo", "Poor Focus"). If accepted, leave empty or "Good quality".
+      OUTPUT FORMAT (JSON ONLY):
+      {
+        "title": "string",
+        "keywords": "string (comma separated)",
+        "category_id": integer,
+        "approval_status": "Accepted" or "Rejected",
+        "approval_reason": "string"
+      }
+    `;
+
+    const contentParts = [{ text: systemPrompt }];
+    if (isVideo && Array.isArray(base64Data)) {
+      base64Data.forEach(frameData => {
+        contentParts.push({ inlineData: { mimeType: mimeType, data: frameData } });
+      });
+    } else {
+      contentParts.push({ inlineData: { mimeType: mimeType, data: base64Data } });
+    }
+
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 60000); 
 
     try {
         let response;
-        const categoriesString = ADOBE_CATEGORIES.map(c => `${c.id}. ${c.name}`).join('\n');
-        
         if (isUsingBackend) {
-             // 1. BACKEND MODE
-             // We send the raw data to the backend, which holds the prompt logic
+             // Backend Mode: Send data to /api/generate
              const payload = {
                 apiKey: activeKey,
                 mimeType: mimeType,
-                data: base64Data, // Single string or array
+                data: base64Data, 
                 fileType: fileObj.type,
                 isVideo: isVideo
             };
@@ -454,53 +505,8 @@ const HackyMetaGenApp = () => {
                 body: JSON.stringify(payload),
                 signal: controller.signal
             });
-
         } else {
-            // 2. DIRECT MODE
-            // We construct the prompt here and send to Google directly
-            const systemPrompt = `
-              You are Hacky MetaGen 3.6, a senior SEO expert for Adobe Stock.
-              Your goal is to generate metadata for this ${fileObj.type} to maximize discoverability.
-              ${isVideo ? "Note: The input provided is a sequence of 5 frames extracted from the video to represent the WHOLE video action/story." : ""}
-              STRICT RULES:
-              1. **Title**: 100-125 characters. Natural, readable, descriptive. Include high-value keywords. NO keyword stuffing.
-              2. **Keywords**: Generate EXACTLY 49 keywords. Comma-separated string.
-                 - **CRITICAL:** Do NOT generate more than 49 keywords. Stop exactly at 49.
-                 **ADOBE STOCK RANKING OPTIMIZATION (CRITICAL):**
-                 - **The first 5-10 keywords MUST be the most impactful, highly relevant, and descriptive terms.** This primarily determines search ranking.
-                 - Start with the absolute main subject, core concept, and primary visual elements.
-                 - Do NOT start with generic terms (like "vector", "illustration", "background") unless they are the primary intent.
-                 **DISTRIBUTION REQUIREMENTS (After the top 10 prioritized keywords):**
-                 - **Short-tail (1-2 words)**: ~12-13 keywords (25-30%)
-                 - **Mid-tail (2-3 words)**: ~21-22 keywords (40-45%)
-                 - **Long-tail (4+ words)**: ~15 keywords (30%)
-                 **CONTENT RULES:**
-                 - NO brand names, trademarks, or personal names.
-                 - Describe the subject, style, mood, lighting, and concept.
-              3. **Category**: Choose the single most appropriate category ID (1-21) from the list below:
-              ${categoriesString}
-              4. **Approval Prediction**: Act as a strict Adobe Stock reviewer. Analyze the image for technical issues (artifacts, noise, blur, over-filtering, trademarks/logos), and Composition.
-                 - Status: "Accepted" or "Rejected".
-                 - Reason: If rejected, give a very short reason (e.g., "Artifacts present", "Visible Logo", "Poor Focus"). If accepted, leave empty or "Good quality".
-              OUTPUT FORMAT (JSON ONLY):
-              {
-                "title": "string",
-                "keywords": "string (comma separated)",
-                "category_id": integer,
-                "approval_status": "Accepted" or "Rejected",
-                "approval_reason": "string"
-              }
-            `;
-
-            const contentParts = [{ text: systemPrompt }];
-            if (isVideo && Array.isArray(base64Data)) {
-              base64Data.forEach(frameData => {
-                contentParts.push({ inlineData: { mimeType: mimeType, data: frameData } });
-              });
-            } else {
-              contentParts.push({ inlineData: { mimeType: mimeType, data: base64Data } });
-            }
-
+            // Client Mode: Send data directly to Google
             response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${activeKey}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -522,10 +528,6 @@ const HackyMetaGenApp = () => {
         }
 
         const data = await response.json();
-        
-        // Handle potentially different response structure if backend returns raw data vs direct
-        // Assuming backend returns same structure as Gemini or pre-processed
-        // The backend code provided earlier returns the raw Gemini response
         if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
         if (!data.candidates || !data.candidates[0]) throw new Error("No candidates returned from AI");
         const candidate = data.candidates[0];
@@ -533,7 +535,6 @@ const HackyMetaGenApp = () => {
         if (!candidate.content?.parts?.[0]) throw new Error("No content generated");
 
         let resultText = candidate.content.parts[0].text;
-        
         const firstBrace = resultText.indexOf('{');
         const lastBrace = resultText.lastIndexOf('}');
         if (firstBrace !== -1 && lastBrace !== -1) {
@@ -650,8 +651,10 @@ const HackyMetaGenApp = () => {
   };
 
   const processUploadedFiles = useCallback(async (uploadedFiles) => {
-    const activeKey = apiKeyRef.current || localStorage.getItem('hackymetagen_api_key') || envApiKey;
-    if (!activeKey) {
+    const isCanvasMode = useCanvasKeyRef.current;
+    const activeKey = apiKeyRef.current || localStorage.getItem('hackymetagen_api_key') || (isCanvasMode ? envApiKey : undefined);
+
+    if (!activeKey && !isCanvasMode) {
       setShowTutorial(true);
       if (fileInputRef.current) fileInputRef.current.value = '';
       return;
@@ -1062,17 +1065,17 @@ const HackyMetaGenApp = () => {
               {isVerifying ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
             </button>
             <button 
-              onClick={() => setUseBackend(!useBackend)}
+              onClick={() => setUseCanvasKey(!useCanvasKey)}
               className={`p-2 rounded-lg border transition-colors ${
-                useBackend
-                  ? 'bg-indigo-600 border-indigo-600 text-white' // Active style
+                useCanvasKey
+                  ? 'bg-purple-600 border-purple-600 text-white' 
                   : theme === 'dark' 
                     ? 'border-slate-700 hover:bg-slate-800 text-slate-400' 
                     : 'border-slate-300 hover:bg-slate-100 text-slate-600'
               }`}
-              title={useBackend ? "Using Backend Server" : "Using Direct API (Client-side)"}
+              title={useCanvasKey ? "Using Canvas/Embedded Key" : "Using User/Saved Key (Backend)"}
             >
-              <Server size={14} />
+              <Sparkles size={14} />
             </button>
             <button 
               onClick={() => setShowTutorial(true)}
@@ -1107,7 +1110,7 @@ const HackyMetaGenApp = () => {
         <div className="max-w-4xl mx-auto mt-12 px-6 text-center mb-12">
           {/* Animated Feature Badge */}
           <span className={`inline-block px-3 py-1 mb-4 text-xs font-semibold tracking-wider text-indigo-400 uppercase bg-indigo-500/10 rounded-full border border-indigo-500/20 transition-all duration-300 transform ${fadeClass}`}>
-            New Feature: {features[featureIndex].type === 'jsx' ? features[featureIndex].content : features[featureIndex].content}
+            New Feature: {features[featureIndex].type === 'jsx' ? features[featureIndex].content : features[featureIndex]}
           </span>
           <h2 className="text-4xl md:text-5xl font-extrabold tracking-tight mb-4">
             <span className={theme === 'dark' ? 'text-white' : 'text-slate-900'}>Adobe Stock</span>{' '}
@@ -1366,7 +1369,7 @@ const HackyMetaGenApp = () => {
                   className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl font-semibold shadow-lg shadow-indigo-500/20 flex items-center justify-center gap-2 transition-all"
                 >
                   {isProcessing ? <Loader2 size={18} className="animate-spin" /> : <Wand2 size={18} />}
-                  {isProcessing ? 'Processing...' : 'Generate All'}
+                  {isProcessing ? 'Processing...' : 'Generate'}
                 </button>
                 <button 
                   onClick={() => handleExportCSV()}
@@ -1581,7 +1584,7 @@ const HackyMetaGenApp = () => {
                                 <label className={`text-[10px] font-bold uppercase tracking-wider mb-1 block ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>
                                     AI Approval Result Prediction <span className="text-[9px] bg-indigo-500/20 text-indigo-400 px-1 rounded ml-1">Beta 0.5</span>
                                 </label>
-                                <p className="text-[9px] text-slate-500 italic mb-2">This is For the Basic Idea (Similar content is total up to you!)</p>
+                                <p className="text-[10px] text-blue-500 italic mb-2">This feature is in beta (prediction of similar content is up to you!)</p>
                                 {file.status === 'complete' ? (
                                     <div className="flex flex-col gap-1">
                                         <div className="flex items-center gap-2">
