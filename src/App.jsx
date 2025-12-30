@@ -1334,34 +1334,33 @@ const HackyMetaGenApp = () => {
             </button>
           )}
 
-          {/* Auto Generate & Category Mode — Side by Side */}
-<div className="flex gap-2">
-  
-  {/* Auto Generate (LEFT) */}
+         {/* Auto Generate & Default Category */}
+<div className="flex gap-3">
+
+  {/* Auto Generate */}
   <button
     onClick={() => setIsAutoGenerate(!isAutoGenerate)}
-    className={`flex-1 py-2.5 px-4 rounded-xl border flex items-center justify-center gap-2 font-medium transition-all ${
-      isAutoGenerate
-        ? 'bg-green-600 border-green-600 text-white shadow-lg shadow-green-500/20'
-        : theme === 'dark'
-          ? 'bg-slate-800 border-slate-700 text-slate-400'
-          : 'bg-white border-slate-300 text-slate-500'
-    }`}
+    className="flex-1 h-12 px-4 rounded-xl flex items-center justify-center gap-2 font-semibold
+               bg-green-600 hover:bg-green-700 text-white
+               shadow-lg shadow-green-600/20
+               transition-all whitespace-nowrap"
   >
-    {isAutoGenerate ? <Zap size={18}/> : <ZapOff size={18} />}
+    <Zap size={16} />
     Auto Generate
   </button>
 
-  {/* Category Mode (RIGHT) */}
+  {/* Default / AI Category */}
   <button
     onClick={toggleCategoryMode}
-    className={`flex-1 py-2.5 px-4 rounded-xl border flex items-center justify-center gap-2 font-medium transition-all ${
-      useAiCategory
-        ? 'bg-green-600 border-green-600 text-white shadow-lg shadow-green-500/20'
-        : 'bg-blue-100 border-blue-200 text-blue-700'
-    }`}
+    className={`flex-1 h-12 px-4 rounded-xl flex items-center justify-center gap-2 font-semibold
+                transition-all whitespace-nowrap
+                ${
+                  useAiCategory
+                    ? 'bg-green-600 hover:bg-green-700 text-white shadow-lg shadow-green-600/20'
+                    : 'bg-slate-100 hover:bg-slate-200 text-slate-800'
+                }`}
   >
-    {useAiCategory ? <Brain size={18} /> : <LayoutGrid size={18} />}
+    <LayoutGrid size={16} />
     {useAiCategory ? 'AI Category' : 'Default Category'}
   </button>
 
