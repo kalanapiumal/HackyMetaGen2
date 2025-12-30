@@ -946,6 +946,33 @@ const HackyMetaGenApp = () => {
     setDraggedIndex(null);
   };
   
+  const StatCard = ({ icon, label, value, accent }) => {
+  const accents = {
+    blue: 'text-blue-400 bg-blue-500/10',
+    green: 'text-green-400 bg-green-500/10',
+    yellow: 'text-yellow-400 bg-yellow-500/10',
+    orange: 'text-orange-400 bg-orange-500/10',
+    red: 'text-red-400 bg-red-500/10',
+  };
+
+  return (
+    <div className="flex items-center gap-4 px-4 py-3 rounded-xl border bg-slate-800/60 border-slate-700 min-w-[170px]">
+      <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${accents[accent]}`}>
+        {icon}
+      </div>
+      <div className="flex flex-col">
+        <span className="text-[10px] uppercase tracking-wider text-slate-400">
+          {label}
+        </span>
+        <span className="text-2xl font-bold text-white">
+          {value}
+        </span>
+      </div>
+    </div>
+  );
+};
+
+  
   // --- Main Render Return ---
   const activeFile = files.find(f => f.id === selectedFileId);
   const completeFiles = files.filter(f => f.status === 'complete');
@@ -1523,18 +1550,10 @@ const HackyMetaGenApp = () => {
           /* BATCH REVIEW VIEW PART */
           /* ======================= */}
 
-{viewMode === 'batch' ? (
-  <div className="h-full flex flex-col">
-    <div className="mb-6">
-      <h3 className="text-2xl font-bold">Multi-File Review</h3>
-      <p className={`text-sm ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>
-        Review your metadata here
-      </p>
-
 {/* File Statistics Panel */}
 {files.length > 0 && (
   <div className="mt-4 flex gap-4 overflow-x-auto pb-2">
-    
+
     <StatCard
       label="Total Files"
       value={files.length}
@@ -1559,9 +1578,7 @@ const HackyMetaGenApp = () => {
     <StatCard
       label="Likely Accepted"
       value={files.filter(
-        f =>
-          f.status === 'complete' &&
-          f.metadata.approval_status !== 'Rejected'
+        f => f.status === 'complete' && f.metadata.approval_status !== 'Rejected'
       ).length}
       accent="green"
       icon={<ShieldCheck size={18} />}
@@ -1570,9 +1587,7 @@ const HackyMetaGenApp = () => {
     <StatCard
       label="Likely Rejected"
       value={files.filter(
-        f =>
-          f.status === 'complete' &&
-          f.metadata.approval_status === 'Rejected'
+        f => f.status === 'complete' && f.metadata.approval_status === 'Rejected'
       ).length}
       accent="orange"
       icon={<ShieldAlert size={18} />}
@@ -1587,6 +1602,7 @@ const HackyMetaGenApp = () => {
 
   </div>
 )}
+          
     </div>
               
               <div className="flex-1 lg:overflow-y-auto pr-2 pb-24">
