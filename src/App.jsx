@@ -1615,14 +1615,6 @@ const HackyMetaGenApp = () => {
         </div>
       )}
     </div>
-
-    {/* --- REST OF YOUR BATCH GRID CODE CONTINUES UNCHANGED --- */}
-  </div>
-) : (
-  /* SINGLE EDITOR VIEW */
-  ...
-)}
-
               
               <div className="flex-1 lg:overflow-y-auto pr-2 pb-24">
                 {files.length === 0 ? (
