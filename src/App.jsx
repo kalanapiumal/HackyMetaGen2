@@ -1516,46 +1516,74 @@ const HackyMetaGenApp = () => {
                 <h3 className="text-2xl font-bold">Multi-File Review</h3>
                 <p className={`text-sm ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>Review your metadata here</p>
                 
-                {/* File Statistics Panel */}
-                <div className={`mt-4 grid grid-cols-3 gap-4 p-4 rounded-xl border ${theme === 'dark' ? 'bg-slate-800/50 border-slate-700' : 'bg-slate-50 border-slate-200'}`}>
-                  {/* Total Files */}
-                  <div className="flex items-center gap-3">
-                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${theme === 'dark' ? 'bg-blue-500/20' : 'bg-blue-100'}`}>
-                      <FileText size={20} className="text-blue-500" />
-                    </div>
-                    <div>
-                      <p className={`text-xs font-medium ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>Total Files</p>
-                      <p className="text-2xl font-bold">{files.length}</p>
-                    </div>
-                  </div>
-                  
-                  {/* Accepted */}
-                  <div className="flex items-center gap-3">
-                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${theme === 'dark' ? 'bg-green-500/20' : 'bg-green-100'}`}>
-                      <ShieldCheck size={20} className="text-green-500" />
-                    </div>
-                    <div>
-                      <p className={`text-xs font-medium ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>Likely Accepted</p>
-                      <p className="text-2xl font-bold text-green-500">
-                        {files.filter(f => f.status === 'complete' && f.metadata.approval_status !== 'Rejected').length}
-                      </p>
-                    </div>
-                  </div>
-                  
-                  {/* Rejected */}
-                  <div className="flex items-center gap-3">
-                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${theme === 'dark' ? 'bg-red-500/20' : 'bg-red-100'}`}>
-                      <ShieldAlert size={20} className="text-red-500" />
-                    </div>
-                    <div>
-                      <p className={`text-xs font-medium ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>Likely Rejected</p>
-                      <p className="text-2xl font-bold text-red-500">
-                        {files.filter(f => f.status === 'complete' && f.metadata.approval_status === 'Rejected').length}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              </div>
+                {/* File Statistics Panel (Only visible when files exist) */}
+{files.length > 0 && (
+  <div className={`mt-4 grid grid-cols-3 gap-4 p-4 rounded-xl border ${
+    theme === 'dark'
+      ? 'bg-slate-800/50 border-slate-700'
+      : 'bg-slate-50 border-slate-200'
+  }`}>
+    {/* Total Files */}
+    <div className="flex items-center gap-3">
+      <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+        theme === 'dark' ? 'bg-blue-500/20' : 'bg-blue-100'
+      }`}>
+        <FileText size={20} className="text-blue-500" />
+      </div>
+      <div>
+        <p className={`text-xs font-medium ${
+          theme === 'dark' ? 'text-slate-400' : 'text-slate-500'
+        }`}>
+          Total Files
+        </p>
+        <p className="text-2xl font-bold">{files.length}</p>
+      </div>
+    </div>
+
+    {/* Likely Accepted */}
+    <div className="flex items-center gap-3">
+      <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+        theme === 'dark' ? 'bg-green-500/20' : 'bg-green-100'
+      }`}>
+        <ShieldCheck size={20} className="text-green-500" />
+      </div>
+      <div>
+        <p className={`text-xs font-medium ${
+          theme === 'dark' ? 'text-slate-400' : 'text-slate-500'
+        }`}>
+          Likely Accepted
+        </p>
+        <p className="text-2xl font-bold text-green-500">
+          {files.filter(
+            f => f.status === 'complete' && f.metadata.approval_status !== 'Rejected'
+          ).length}
+        </p>
+      </div>
+    </div>
+
+    {/* Likely Rejected */}
+    <div className="flex items-center gap-3">
+      <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+        theme === 'dark' ? 'bg-red-500/20' : 'bg-red-100'
+      }`}>
+        <ShieldAlert size={20} className="text-red-500" />
+      </div>
+      <div>
+        <p className={`text-xs font-medium ${
+          theme === 'dark' ? 'text-slate-400' : 'text-slate-500'
+        }`}>
+          Likely Rejected
+        </p>
+        <p className="text-2xl font-bold text-red-500">
+          {files.filter(
+            f => f.status === 'complete' && f.metadata.approval_status === 'Rejected'
+          ).length}
+        </p>
+      </div>
+    </div>
+  </div>
+)}
+
               
               <div className="flex-1 lg:overflow-y-auto pr-2 pb-24">
                 {files.length === 0 ? (
