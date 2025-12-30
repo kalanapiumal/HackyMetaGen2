@@ -1602,9 +1602,7 @@ const HackyMetaGenApp = () => {
 
   </div>
 )}
-          
-    </div>
-              
+                        
               <div className="flex-1 lg:overflow-y-auto pr-2 pb-24">
                 {files.length === 0 ? (
                   <div 
