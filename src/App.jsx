@@ -27,7 +27,10 @@ import {
   ShieldAlert,
   AlertTriangle,
   Server,
-  Sparkles
+  Sparkles,
+  Scale,
+  FileText,
+  Shield
 } from 'lucide-react';
 
 /**
@@ -37,7 +40,7 @@ import {
 
 // --- Constants ---
 const MAX_TITLE_LENGTH = 125;
-const MIN_TITLE_LENGTH = 100; // Soft limit for validation
+const MIN_TITLE_LENGTH = 100; 
 const TARGET_KEYWORD_COUNT = 49;
 
 const ADOBE_CATEGORIES = [
@@ -63,6 +66,60 @@ const ADOBE_CATEGORIES = [
   { id: 20, name: "Transport" },
   { id: 21, name: "Travel" },
 ];
+
+const LEGAL_CONTENT = {
+  disclaimer: {
+    title: "Disclaimer",
+    icon: <AlertTriangle size={24} className="text-amber-500" />,
+    content: (
+      <div className="space-y-4 text-left">
+        <div className="p-4 bg-amber-500/10 border border-amber-500/20 rounded-lg text-amber-600 dark:text-amber-400 text-xs font-semibold">
+           IMPORTANT: Hacky MetaGen is an independent tool and is NOT affiliated with Adobe Inc.
+        </div>
+        <p><strong>1. No Affiliation:</strong> Hacky MetaGen is an independent software tool developed to assist stock contributors. It is <strong>not</strong> affiliated with, endorsed by, sponsored by, or in any way officially connected with Adobe Inc., Adobe Stock, or any of their subsidiaries or affiliates. The official Adobe Stock website can be found at <a href="https://stock.adobe.com" target="_blank" className="underline">stock.adobe.com</a>.</p>
+        <p><strong>2. AI Prediction Accuracy:</strong> The "AI Approval Result Prediction" feature is currently in <strong>Beta (v0.5)</strong>. This feature uses artificial intelligence (Gemini) to analyze images against general stock photography standards. <strong>This is an estimation only and does not guarantee acceptance or rejection.</strong> The Adobe Stock review process involves human moderation and subjective criteria that AI cannot fully predict.</p>
+        <p><strong>3. Limitation of Liability:</strong> We are not responsible for any assets rejected by Adobe Stock, nor for any account warnings, suspensions, or terminations resulting from the upload of content generated or processed by this tool. Users are solely responsible for reviewing all metadata (titles, keywords) for accuracy, trademark issues, and relevance before submission.</p>
+        <p><strong>4. "As Is" Service:</strong> This service is provided "as is" without any representations or warranties, express or implied. Hacky MetaGen makes no representations or warranties in relation to the availability, accuracy, or completeness of the information and materials provided.</p>
+      </div>
+    )
+  },
+  privacy: {
+    title: "Privacy Policy",
+    icon: <Shield size={24} className="text-green-500" />,
+    content: (
+      <div className="space-y-4 text-left">
+        <p className="text-sm opacity-75">Last Updated: October 26, 2025</p>
+        <p><strong>1. Data Processing Model:</strong> Hacky MetaGen operates primarily as a client-side interface. When you upload files for processing:</p>
+        <ul className="list-disc pl-5 space-y-1 opacity-90">
+            <li>Images/Videos are processed in your browser's memory to extract frames or thumbnails.</li>
+            <li>If "Backend Mode" is used, data is transmitted transiently through our serverless functions solely to reach the Google Gemini API.</li>
+            <li>We <strong>do not</strong> permanently store, save, or claim ownership of your uploaded assets.</li>
+        </ul>
+        <p><strong>2. API Keys & Local Storage:</strong> If you provide your own Google Gemini API Key, it is stored locally in your browser's <code>localStorage</code> on your device. It is not saved to our databases. You retain full control over your key and can delete it at any time by clearing the input field.</p>
+        <p><strong>3. Third-Party Data Sharing:</strong> This tool utilizes the Google Gemini API to generate metadata. By using this tool, you acknowledge that your input data (image frames and prompts) is sent to Google for processing. Please refer to <a href="https://policies.google.com/privacy" target="_blank" className="underline text-indigo-500">Google's Privacy Policy</a> regarding how they handle API data.</p>
+        <p><strong>4. Usage Analytics:</strong> We may collect anonymous, non-identifiable usage statistics (e.g., number of generations) to improve service stability, but this does not include the content of your uploads.</p>
+      </div>
+    )
+  },
+  terms: {
+    title: "Terms of Service",
+    icon: <Scale size={24} className="text-blue-500" />,
+    content: (
+      <div className="space-y-4 text-left">
+        <p><strong>1. Acceptance of Terms:</strong> By accessing and using Hacky MetaGen, you accept and agree to be bound by the terms and provision of this agreement.</p>
+        <p><strong>2. Use License:</strong> Permission is granted to use Hacky MetaGen for personal or commercial purposes to generate metadata for stock assets. You may not:</p>
+        <ul className="list-disc pl-5 space-y-1 opacity-90">
+            <li>Use the service to generate metadata for illegal, harmful, sexually explicit, or violent content.</li>
+            <li>Attempt to reverse engineer any part of the service.</li>
+            <li>Use the service to spam or overload the API.</li>
+        </ul>
+        <p><strong>3. Intellectual Property:</strong> You retain all rights to the images and videos you process. We claim no intellectual property rights over the content you upload or the metadata generated.</p>
+        <p><strong>4. API Usage:</strong> You agree to comply with Google's Generative AI Acceptable Use Policy when using the integrated AI features.</p>
+        <p><strong>5. Modifications:</strong> We reserve the right to revise these terms of service at any time without notice. By using this website you are agreeing to be bound by the then current version of these terms of service.</p>
+      </div>
+    )
+  }
+};
 
 const HackyMetaGenApp = () => {
   // 1. State Declarations
@@ -107,6 +164,8 @@ const HackyMetaGenApp = () => {
   const [showErrorMessage, setShowErrorMessage] = useState(false); 
   const [showTutorial, setShowTutorial] = useState(false); 
   const [showUnsupportedError, setShowUnsupportedError] = useState(false); 
+  // NEW: Legal Modal State
+  const [activeLegalModal, setActiveLegalModal] = useState(null); 
   const [isVerifying, setIsVerifying] = useState(false); 
   const envApiKey = ""; // The execution environment provides the key at runtime
 
@@ -127,11 +186,11 @@ const HackyMetaGenApp = () => {
   const apiKeyRef = useRef(userApiKey); 
   const useCanvasKeyRef = useRef(useCanvasKey);
 
-  // Features List - Using direct React elements to avoid object error
+  // Defined as mixed content array
   const features = [
-    "Video Metadata Support",
-    "CSV FileName Extension Selection Support",
-    <span key="approval">AI Approval Result Prediction <span className="mx-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-500/20 text-blue-400 border border-blue-500/30 align-middle">Beta 0.5</span> Added</span>
+    { type: 'text', content: "Video Metadata Support" },
+    { type: 'text', content: "CSV FileName Extension Selection Support" },
+    { type: 'jsx', content: "AI Approval Result Prediction Beta 0.5 Added" }
   ];
 
   // 2. Effects
@@ -499,6 +558,9 @@ const HackyMetaGenApp = () => {
                 isVideo: isVideo
             };
             
+            // NOTE: In the preview environment here, there is NO backend running.
+            // If you test here with "Sparkles OFF" (Backend ON), it will fail with 404/500.
+            // But this code is correct for your Vercel deployment with api/generate.js
             response = await fetch(`/api/generate`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -960,6 +1022,46 @@ const HackyMetaGenApp = () => {
         </div>
       )}
 
+      {/* LEGAL MODAL (DISCLAIMER / PRIVACY / TERMS) */}
+      {activeLegalModal && LEGAL_CONTENT[activeLegalModal] && (
+         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+             <div className={`max-w-2xl w-full rounded-2xl shadow-2xl overflow-hidden ${theme === 'dark' ? 'bg-slate-800' : 'bg-white'} max-h-[85vh] flex flex-col`}>
+                 {/* Modal Header */}
+                 <div className="p-6 border-b border-slate-200/10 flex justify-between items-center bg-gradient-to-r from-transparent to-indigo-500/5">
+                     <div className="flex items-center gap-3">
+                         <div className={`p-2 rounded-lg bg-slate-100 dark:bg-slate-700/50`}>
+                             {LEGAL_CONTENT[activeLegalModal].icon}
+                         </div>
+                         <h3 className={`text-xl font-bold ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
+                             {LEGAL_CONTENT[activeLegalModal].title}
+                         </h3>
+                     </div>
+                     <button 
+                         onClick={() => setActiveLegalModal(null)} 
+                         className={`p-2 rounded-full transition-colors ${theme === 'dark' ? 'hover:bg-slate-700 text-slate-400' : 'hover:bg-slate-100 text-slate-500'}`}
+                     >
+                         <X size={20} />
+                     </button>
+                 </div>
+                 
+                 {/* Modal Content - Scrollable */}
+                 <div className={`p-6 overflow-y-auto text-sm leading-relaxed ${theme === 'dark' ? 'text-slate-300' : 'text-slate-600'}`}>
+                     {LEGAL_CONTENT[activeLegalModal].content}
+                 </div>
+                 
+                 {/* Modal Footer */}
+                 <div className={`p-6 border-t border-slate-200/10 ${theme === 'dark' ? 'bg-slate-900/30' : 'bg-slate-50'}`}>
+                     <button 
+                         onClick={() => setActiveLegalModal(null)}
+                         className="w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold transition-colors shadow-lg shadow-indigo-500/20"
+                     >
+                         Close
+                     </button>
+                 </div>
+             </div>
+         </div>
+      )}
+
       {/* TUTORIAL MODAL */}
       {showTutorial && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in duration-200">
@@ -1034,8 +1136,19 @@ const HackyMetaGenApp = () => {
               placeholder={isKeyInvalid ? "Check Or Replace" : (isKeySaved ? "System Ready" : "Enter Gemini API Key")}
               value={userApiKey}
               onChange={(e) => {
-                setUserApiKey(e.target.value);
-                setIsKeySaved(false); 
+                const val = e.target.value;
+                setUserApiKey(val);
+                
+                // If user clears the box, remove the stored key immediately
+                if (val === '') {
+                  localStorage.removeItem('hackymetagen_api_key');
+                  apiKeyRef.current = '';
+                  setIsKeySaved(false);
+                } else {
+                  // If editing, mark as not saved until they click check
+                  setIsKeySaved(false); 
+                }
+                
                 setIsKeyInvalid(false); 
               }}
               className={`text-xs px-3 py-2 rounded-lg border transition-all w-20 focus:w-48 sm:w-32 sm:focus:w-64 ${
@@ -1065,6 +1178,7 @@ const HackyMetaGenApp = () => {
               {isVerifying ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
             </button>
             
+            {/* Show Canvas Key button ONLY if no user key is saved */}
             {!isKeySaved && (
               <button 
                 onClick={() => setUseCanvasKey(!useCanvasKey)}
@@ -1807,6 +1921,18 @@ const HackyMetaGenApp = () => {
         </div>
 
       </main>
+
+      {/* 4. FOOTER */}
+      <footer className={`py-6 text-center text-xs ${theme === 'dark' ? 'text-slate-600' : 'text-slate-400'}`}>
+        <div className="flex justify-center items-center gap-6 mb-2">
+            <span className="font-bold cursor-default">Legal</span>
+            <button onClick={() => setActiveLegalModal('disclaimer')} className="hover:text-indigo-500 transition-colors">Disclaimer</button>
+            <button onClick={() => setActiveLegalModal('privacy')} className="hover:text-indigo-500 transition-colors">Privacy Policy</button>
+            <button onClick={() => setActiveLegalModal('terms')} className="hover:text-indigo-500 transition-colors">Terms of Services</button>
+        </div>
+        <p className="mb-1">© 2025-2026 Hacky MetaGen. All rights reserved.</p>
+        <p className="opacity-75">Hacky MetaGen is not affiliated with or endorsed by Adobe Inc.</p>
+      </footer>
 
       {/* FIXED BOTTOM BAR (Only in Batch View) */}
       {viewMode === 'batch' && (
