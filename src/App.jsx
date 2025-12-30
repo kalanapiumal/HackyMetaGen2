@@ -77,7 +77,7 @@ const LEGAL_CONTENT = {
            IMPORTANT: Hacky MetaGen is an independent tool and is NOT affiliated with Adobe Inc.
         </div>
         <p><strong>1. No Affiliation:</strong> Hacky MetaGen is an independent software tool developed to assist stock contributors. It is <strong>not</strong> affiliated with, endorsed by, sponsored by, or in any way officially connected with Adobe Inc., Adobe Stock, or any of their subsidiaries or affiliates. The official Adobe Stock website can be found at <a href="https://stock.adobe.com" target="_blank" className="underline">stock.adobe.com</a>.</p>
-        <p><strong>2. AI Prediction Accuracy:</strong> The "AI Approval Result Prediction" feature is currently in <strong>Beta (v0.5)</strong>. This feature uses artificial intelligence (Gemini) to analyze images against general stock photography standards. <strong>This is an estimation only and does not guarantee acceptance or rejection.</strong> The Adobe Stock review process involves human moderation and subjective criteria that AI cannot fully predict.</p>
+        <p><strong>2. AI Prediction Accuracy:</strong> The "AI Approval Result Prediction" feature is currently in <strong>Beta (v0.5)</strong>. This feature uses artificial intelligence to analyze images against general stock photography standards. <strong>This is an estimation only and does not guarantee acceptance or rejection.</strong> The Adobe Stock review process involves human moderation and subjective criteria that AI cannot fully predict.</p>
         <p><strong>3. Limitation of Liability:</strong> We are not responsible for any assets rejected by Adobe Stock, nor for any account warnings, suspensions, or terminations resulting from the upload of content generated or processed by this tool. Users are solely responsible for reviewing all metadata (titles, keywords) for accuracy, trademark issues, and relevance before submission.</p>
         <p><strong>4. "As Is" Service:</strong> This service is provided "as is" without any representations or warranties, express or implied. Hacky MetaGen makes no representations or warranties in relation to the availability, accuracy, or completeness of the information and materials provided.</p>
       </div>
@@ -1706,7 +1706,8 @@ const HackyMetaGenApp = () => {
                                 {file.status === 'complete' ? (
                                     <div className="flex flex-col gap-1">
                                         <div className="flex items-center gap-2">
-                                            {file.metadata.approval_status === 'Accepted' ? (
+                                            {/* FIXED: Icon logic now matches text logic. If not 'Rejected', assume Accepted/Green. */}
+                                            {file.metadata.approval_status !== 'Rejected' ? (
                                                 <ShieldCheck size={14} className="text-green-500" />
                                             ) : (
                                                 <ShieldAlert size={14} className="text-red-500" />
