@@ -1180,7 +1180,7 @@ useEffect(() => {
           </div>
         </div>
         
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-0.5">
           
           {/* Messages */}
           <div className="relative h-4 hidden md:flex items-center justify-end w-64 overflow-hidden pointer-events-none">
