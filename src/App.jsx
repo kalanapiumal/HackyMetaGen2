@@ -38,12 +38,16 @@ import {
 /**
  * Hacky MetaGen 3.7 - Adobe Stock Metadata Generator
  * Built with React + Tailwind CSS + Gemini API
+ * Optimized for Client-Side Preview
  */
 
 // --- Constants ---
 const MAX_TITLE_LENGTH = 125;
 const MIN_TITLE_LENGTH = 100; 
 const TARGET_KEYWORD_COUNT = 49;
+// The execution environment provides the key at runtime for simple scripts, 
+// but for this full UI app, we allow user input or fallback.
+const apiKey = ""; 
 
 const ADOBE_CATEGORIES = [
   { id: 1, name: "Animals" },
@@ -94,7 +98,7 @@ const LEGAL_CONTENT = {
         <p><strong>1. Data Processing Model:</strong> Hacky MetaGen operates primarily as a client-side interface. When you upload files for processing:</p>
         <ul className="list-disc pl-5 space-y-1 opacity-90">
             <li>Images/Videos are processed in your browser's memory to extract frames or thumbnails.</li>
-            <li>If "Backend Mode" is used, data is transmitted transiently through our serverless functions solely to reach the Google Gemini API.</li>
+            <li>Data is transmitted directly from your browser to the Google Gemini API.</li>
             <li>We <strong>do not</strong> permanently store, save, or claim ownership of your uploaded assets.</li>
         </ul>
         <p><strong>2. API Keys & Local Storage:</strong> If you provide your own Google Gemini API Key, it is stored locally in your browser's <code>localStorage</code> on your device. It is not saved to our databases. You retain full control over your key and can delete it at any time by clearing the input field.</p>
@@ -127,13 +131,13 @@ const HackyMetaGenApp = () => {
   // 1. State Declarations
   const [theme, setTheme] = useState(() => localStorage.getItem('hackymetagen_theme') || 'dark');
   const [files, setFiles] = useState([]);
-  // 🔔 Notification sound toggle
-const [notificationsEnabled, setNotificationsEnabled] = useState(() => {
-  const saved = localStorage.getItem('hackymetagen_notify');
-  return saved !== null ? JSON.parse(saved) : true;
-});
+  
+  const [notificationsEnabled, setNotificationsEnabled] = useState(() => {
+    const saved = localStorage.getItem('hackymetagen_notify');
+    return saved !== null ? JSON.parse(saved) : true;
+  });
 
-const hasNotifiedRef = useRef(false);
+  const hasNotifiedRef = useRef(false);
   const [selectedFileId, setSelectedFileId] = useState(null);
   const [contentType, setContentType] = useState('image'); 
   const [isProcessing, setIsProcessing] = useState(false);
@@ -159,12 +163,6 @@ const hasNotifiedRef = useRef(false);
     return saved !== null ? JSON.parse(saved) : false;
   });
 
-  // Canvas/Embedded Key Toggle State (Defaults to false, which implies Backend Mode ON)
-  const [useCanvasKey, setUseCanvasKey] = useState(() => {
-    const saved = localStorage.getItem('hackymetagen_use_canvas_key');
-    return saved !== null ? JSON.parse(saved) : false;
-  });
-
   // API Key Handling
   const [userApiKey, setUserApiKey] = useState(''); 
   const [isKeySaved, setIsKeySaved] = useState(false); 
@@ -176,7 +174,6 @@ const hasNotifiedRef = useRef(false);
   // NEW: Legal Modal State
   const [activeLegalModal, setActiveLegalModal] = useState(null); 
   const [isVerifying, setIsVerifying] = useState(false); 
-  const envApiKey = ""; // The execution environment provides the key at runtime
 
   // UI State
   const [isGlobalDragging, setIsGlobalDragging] = useState(false);
@@ -193,7 +190,6 @@ const hasNotifiedRef = useRef(false);
   const preserveExtensionRef = useRef(preserveExtension);
   const filesRef = useRef(files); 
   const apiKeyRef = useRef(userApiKey); 
-  const useCanvasKeyRef = useRef(useCanvasKey);
 
   // Defined as mixed content array
   const features = [
@@ -208,13 +204,11 @@ const hasNotifiedRef = useRef(false);
   useEffect(() => { localStorage.setItem('hackymetagen_use_ai_category', JSON.stringify(useAiCategory)); }, [useAiCategory]);
   useEffect(() => { localStorage.setItem('hackymetagen_csv_extension', csvExtension); }, [csvExtension]);
   useEffect(() => { localStorage.setItem('hackymetagen_preserve_extension', JSON.stringify(preserveExtension)); }, [preserveExtension]);
-  useEffect(() => { localStorage.setItem('hackymetagen_use_canvas_key', JSON.stringify(useCanvasKey)); }, [useCanvasKey]);
   
   useEffect(() => { csvExtensionRef.current = csvExtension; }, [csvExtension]);
   useEffect(() => { preserveExtensionRef.current = preserveExtension; }, [preserveExtension]);
   useEffect(() => { filesRef.current = files; }, [files]);
   useEffect(() => { apiKeyRef.current = userApiKey; }, [userApiKey]);
-  useEffect(() => { useCanvasKeyRef.current = useCanvasKey; }, [useCanvasKey]);
 
   useEffect(() => {
     const savedKey = localStorage.getItem('hackymetagen_api_key');
@@ -450,16 +444,11 @@ const hasNotifiedRef = useRef(false);
 
   // --- API Interaction ---
   const performGeneration = async (fileObj) => {
-    const isCanvasMode = useCanvasKeyRef.current;
+    let activeKey = apiKeyRef.current || localStorage.getItem('hackymetagen_api_key') || apiKey;
     
-    // Logic: 
-    // Sparkles OFF (useCanvasKey = false) -> Backend Mode -> isUsingBackend = true
-    // Sparkles ON  (useCanvasKey = true)  -> Client Mode  -> isUsingBackend = false
-    const isUsingBackend = !isCanvasMode; 
-
-    let activeKey = apiKeyRef.current || localStorage.getItem('hackymetagen_api_key');
-    if (isCanvasMode) {
-        activeKey = activeKey || envApiKey; 
+    // Fallback for environment testing if no key provided
+    if (!activeKey) {
+        throw new Error("Missing API Key. Please click the Info icon to learn how to get one.");
     }
 
     let mimeType = '';
@@ -556,38 +545,16 @@ const hasNotifiedRef = useRef(false);
     const timeoutId = setTimeout(() => controller.abort(), 60000); 
 
     try {
-        let response;
-        if (isUsingBackend) {
-             // Backend Mode: Send data to /api/generate
-             const payload = {
-                apiKey: activeKey,
-                mimeType: mimeType,
-                data: base64Data, 
-                fileType: fileObj.type,
-                isVideo: isVideo
-            };
-            
-            // NOTE: In the preview environment here, there is NO backend running.
-            // If you test here with "Sparkles OFF" (Backend ON), it will fail with 404/500.
-            // But this code is correct for your Vercel deployment with api/generate.js
-            response = await fetch(`/api/generate`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload),
-                signal: controller.signal
-            });
-        } else {
-            // Client Mode: Send data directly to Google
-            response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${activeKey}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    contents: [{ parts: contentParts }],
-                    generationConfig: { responseMimeType: "application/json" }
-                }),
-                signal: controller.signal
-            });
-        }
+        // Client Mode: Send data directly to Google
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${activeKey}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                contents: [{ parts: contentParts }],
+                generationConfig: { responseMimeType: "application/json" }
+            }),
+            signal: controller.signal
+        });
 
         if (!response.ok) {
             let errorMsg = `API Error: ${response.status} ${response.statusText}`;
@@ -722,10 +689,9 @@ const hasNotifiedRef = useRef(false);
   };
 
   const processUploadedFiles = useCallback(async (uploadedFiles) => {
-    const isCanvasMode = useCanvasKeyRef.current;
-    const activeKey = apiKeyRef.current || localStorage.getItem('hackymetagen_api_key') || (isCanvasMode ? envApiKey : undefined);
+    const activeKey = apiKeyRef.current || localStorage.getItem('hackymetagen_api_key') || apiKey;
 
-    if (!activeKey && !isCanvasMode) {
+    if (!activeKey) {
       setShowTutorial(true);
       if (fileInputRef.current) fileInputRef.current.value = '';
       return;
@@ -996,16 +962,15 @@ const StatCard = ({ icon, label, value, accent }) => {
   const activeFile = files.find(f => f.id === selectedFileId);
   const completeFiles = files.filter(f => f.status === 'complete');
   const allFilesComplete = files.length > 0 && files.every(f => f.status === 'complete');
-  // 🔔 Play notification sound once when all files complete
+  
 useEffect(() => {
   if (!notificationsEnabled) return;
 
   if (allFilesComplete && !hasNotifiedRef.current) {
     hasNotifiedRef.current = true;
 
-    const audio = new Audio(
-      'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQAAAAA='
-    );
+    // Use the uploaded applepay.mp3 file
+    const audio = new Audio('https://www.myinstants.com/media/sounds/applepay.mp3');
     audio.volume = 0.35;
     audio.play().catch(() => {});
   }
@@ -1243,23 +1208,6 @@ useEffect(() => {
               {isVerifying ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
             </button>
             
-            {/* Show Canvas Key button ONLY if no user key is saved */}
-            {!isKeySaved && (
-              <button 
-                onClick={() => setUseCanvasKey(!useCanvasKey)}
-                className={`p-2 rounded-lg border transition-colors ${
-                  useCanvasKey
-                    ? 'bg-purple-600 border-purple-600 text-white' 
-                    : theme === 'dark' 
-                      ? 'border-slate-700 hover:bg-slate-800 text-slate-400' 
-                      : 'border-slate-300 hover:bg-slate-100 text-slate-600'
-                }`}
-                title={useCanvasKey ? "Using Canvas/Embedded Key" : "Using User/Saved Key (Backend)"}
-              >
-                <Sparkles size={14} />
-              </button>
-            )}
-
             <button 
               onClick={() => setShowTutorial(true)}
               className={`p-2 rounded-lg border transition-colors ${
@@ -1274,7 +1222,7 @@ useEffect(() => {
           </div>
 
           <div className={`w-px h-6 mx-2 hidden sm:block ${theme === 'dark' ? 'bg-slate-800' : 'bg-slate-200'}`}></div>
-{/* 🔔 Notification Toggle */}
+{/* 粕 Notification Toggle */}
 <button
   onClick={() => setNotificationsEnabled(p => !p)}
   className={`p-2 rounded-full transition-colors ${
@@ -1287,7 +1235,7 @@ useEffect(() => {
   {notificationsEnabled ? <Bell size={18} /> : <BellOff size={18} />}
 </button>
 
-{/* 🌙 Dark Mode Toggle */}
+{/* 嫌 Dark Mode Toggle */}
 <button
   onClick={handleToggleTheme}
   className={`p-2 rounded-full transition-colors ${
