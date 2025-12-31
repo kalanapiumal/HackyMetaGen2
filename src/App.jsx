@@ -970,7 +970,7 @@ useEffect(() => {
     hasNotifiedRef.current = true;
 
     // Use the uploaded applepay.mp3 file
-    const audio = new Audio('https://www.myinstants.com/media/sounds/applepay.mp3');
+    const audio = new Audio('https://www.myinstants.com/media/sounds/rzhd-pribytie-poezda.mp3');
     audio.volume = 0.35;
     audio.play().catch(() => {});
   }
