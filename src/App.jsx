@@ -32,7 +32,8 @@ import {
   FileText,
   Bell,
   BellOff,
-  Shield
+  Shield,
+  Tags
 } from 'lucide-react';
 
 /**
@@ -45,6 +46,7 @@ import {
 const MAX_TITLE_LENGTH = 125;
 const MIN_TITLE_LENGTH = 100; 
 const TARGET_KEYWORD_COUNT = 49;
+const BATCH_SIZE = 3; // Process 3 images per API call to save quota
 // The execution environment provides the key at runtime for simple scripts, 
 // but for this full UI app, we allow user input or fallback.
 const apiKey = ""; 
@@ -127,7 +129,7 @@ const LEGAL_CONTENT = {
   }
 };
 
-const HackyMetaGenApp = () => {
+const App = () => {
   // 1. State Declarations
   const [theme, setTheme] = useState(() => localStorage.getItem('hackymetagen_theme') || 'dark');
   const [files, setFiles] = useState([]);
@@ -149,7 +151,7 @@ const HackyMetaGenApp = () => {
 
   const [isAutoGenerate, setIsAutoGenerate] = useState(() => {
     const saved = localStorage.getItem('hackymetagen_auto_generate');
-    return saved !== null ? JSON.parse(saved) : true;
+    return saved !== null ? JSON.parse(saved) : false;
   });
   
   const [useAiCategory, setUseAiCategory] = useState(() => {
@@ -162,6 +164,9 @@ const HackyMetaGenApp = () => {
     const saved = localStorage.getItem('hackymetagen_preserve_extension');
     return saved !== null ? JSON.parse(saved) : false;
   });
+
+  // Default Keywords State
+  const [defaultKeywords, setDefaultKeywords] = useState(() => localStorage.getItem('hackymetagen_default_keywords') || '');
 
   // API Key Handling
   const [userApiKey, setUserApiKey] = useState(''); 
@@ -190,25 +195,83 @@ const HackyMetaGenApp = () => {
   const preserveExtensionRef = useRef(preserveExtension);
   const filesRef = useRef(files); 
   const apiKeyRef = useRef(userApiKey); 
+  const defaultKeywordsRef = useRef(defaultKeywords);
 
-  // Defined as mixed content array
-  const features = [
-    { type: 'text', content: "Video Metadata Support" },
-    { type: 'text', content: "CSV FileName Extension Selection Support" },
-    { type: 'jsx', content: "AI Approval Result Prediction Beta 0.5 Added" }
-  ];
+// Defined as mixed content array
+const features = [
+{type: 'jsx',
+    content: (
+      <span className="flex items-center gap-2 whitespace-nowrap truncate max-w-full">
+        Default Keywords Manager
+        <span className="text-[10px] px-1.5 py-0.5 rounded bg-white text-black font-bold uppercase">
+          New
+        </span>
+      </span>
+    )
+  },
+{type: 'jsx',
+    content: (
+      <span className="flex items-center gap-2 whitespace-nowrap truncate max-w-full">
+        Smart Batch Processing (Quota Saver)
+        <span className="text-[10px] px-1.5 py-0.5 rounded bg-white text-black font-bold uppercase">
+          New
+        </span>
+      </span>
+    )
+  },
+  {type: 'jsx',
+    content: (
+      <span className="flex items-center gap-2 whitespace-nowrap truncate max-w-full">
+        Files Statistics Panel
+        <span className="text-[10px] px-1.5 py-0.5 rounded bg-white text-black font-bold uppercase">
+          New
+        </span>
+      </span>
+    )
+  },
+
+  {
+    type: 'jsx',
+    content: (
+      <span className="flex items-center gap-2 whitespace-nowrap truncate max-w-full">
+        Notification Sound On Batch Completed
+      <span className="text-[10px] px-1.5 py-0.5 rounded bg-white text-black font-bold uppercase animate-pulse">
+        New
+      </span>
+      </span>
+    )
+  },
+  
+    {
+    type: 'jsx',
+    content: (
+      <span className="flex items-center gap-2 whitespace-nowrap truncate max-w-full">
+        AI Approval Result Prediction Beta 0.5
+      <span className="text-[10px] px-1.5 py-0.5 rounded bg-white text-black font-bold uppercase animate-pulse">
+        New
+      </span>
+      </span>
+    )
+  },
+  { type: 'text', content: " CSV FileName Extension Selection Support" },
+  { type: 'text', content: " Video Metadata Support" }
+];
+
 
   // 2. Effects
   useEffect(() => { localStorage.setItem('hackymetagen_theme', theme); }, [theme]);
+  useEffect(() => {localStorage.setItem('hackymetagen_notify',JSON.stringify(notificationsEnabled));}, [notificationsEnabled]);
   useEffect(() => { localStorage.setItem('hackymetagen_auto_generate', JSON.stringify(isAutoGenerate)); }, [isAutoGenerate]);
   useEffect(() => { localStorage.setItem('hackymetagen_use_ai_category', JSON.stringify(useAiCategory)); }, [useAiCategory]);
   useEffect(() => { localStorage.setItem('hackymetagen_csv_extension', csvExtension); }, [csvExtension]);
   useEffect(() => { localStorage.setItem('hackymetagen_preserve_extension', JSON.stringify(preserveExtension)); }, [preserveExtension]);
+  useEffect(() => { localStorage.setItem('hackymetagen_default_keywords', defaultKeywords); }, [defaultKeywords]);
   
   useEffect(() => { csvExtensionRef.current = csvExtension; }, [csvExtension]);
   useEffect(() => { preserveExtensionRef.current = preserveExtension; }, [preserveExtension]);
   useEffect(() => { filesRef.current = files; }, [files]);
   useEffect(() => { apiKeyRef.current = userApiKey; }, [userApiKey]);
+  useEffect(() => { defaultKeywordsRef.current = defaultKeywords; }, [defaultKeywords]);
 
   useEffect(() => {
     const savedKey = localStorage.getItem('hackymetagen_api_key');
@@ -442,15 +505,49 @@ const HackyMetaGenApp = () => {
     });
   };
 
-  // --- API Interaction ---
-  const performGeneration = async (fileObj) => {
-    let activeKey = apiKeyRef.current || localStorage.getItem('hackymetagen_api_key') || apiKey;
-    
-    // Fallback for environment testing if no key provided
-    if (!activeKey) {
-        throw new Error("Missing API Key. Please click the Info icon to learn how to get one.");
+  // --- MERGE DEFAULT KEYWORDS LOGIC ---
+  const mergeKeywords = (aiKeywordsStr) => {
+    const currentDefaults = defaultKeywordsRef.current;
+    if (!currentDefaults || !currentDefaults.trim()) return aiKeywordsStr;
+
+    // 1. Parse lists
+    const defaultsList = currentDefaults.split(',').map(s => s.trim()).filter(s => s);
+    let aiList = aiKeywordsStr.split(',').map(s => s.trim()).filter(s => s);
+
+    if (defaultsList.length === 0) return aiKeywordsStr;
+
+    const countToRemove = defaultsList.length;
+    let removedCount = 0;
+
+    // 2. Remove short-tail keywords (1-2 words) starting from the END of the list
+    // iterating backwards to safely splice
+    for (let i = aiList.length - 1; i >= 0; i--) {
+        if (removedCount >= countToRemove) break;
+        
+        const wordCount = aiList[i].split(/\s+/).length;
+        if (wordCount <= 2) {
+            aiList.splice(i, 1);
+            removedCount++;
+        }
     }
 
+    // 3. If we still haven't removed enough (e.g. AI generated only long tails), remove from end
+    while (removedCount < countToRemove && aiList.length > 0) {
+        aiList.pop();
+        removedCount++;
+    }
+
+    // 4. Append defaults
+    const combined = [...aiList, ...defaultsList];
+    
+    // 5. Ensure we respect the target max if somehow exceeded significantly, though logic above balances it.
+    // If strict 49 is needed:
+    // return combined.slice(0, 49).join(', ');
+    return combined.join(', ');
+  };
+
+  // --- API Interaction (BATCHED) ---
+  const prepareAssetData = async (fileObj) => {
     let mimeType = '';
     let base64Data = null;
     const ext = fileObj.file.name.split('.').pop().toLowerCase();
@@ -461,7 +558,6 @@ const HackyMetaGenApp = () => {
             base64Data = await extractVideoFrames(fileObj.file, 5);
             mimeType = 'image/jpeg'; 
         } catch (err) {
-            console.error("Video processing failed:", err);
             throw new Error(`Video processing error: ${err.message}`);
         }
     } else {
@@ -496,61 +592,88 @@ const HackyMetaGenApp = () => {
             mimeType = detectedMime;
         }
     }
+    return { mimeType, data: base64Data, isVideo };
+  };
 
+  const generateBatchMetadata = async (fileObjs) => {
+    let activeKey = apiKeyRef.current || localStorage.getItem('hackymetagen_api_key') || apiKey;
+    
+    if (!activeKey) {
+        throw new Error("Missing API Key. Please click the Info icon to learn how to get one.");
+    }
+
+    // 1. Prepare all assets data
+    const assets = await Promise.all(fileObjs.map(async (file) => {
+        try {
+            const data = await prepareAssetData(file);
+            return { id: file.id, ...data, success: true };
+        } catch (e) {
+            return { id: file.id, error: e.message, success: false };
+        }
+    }));
+
+    const validAssets = assets.filter(a => a.success);
+    if (validAssets.length === 0) {
+        throw new Error("Failed to prepare any files for API transmission.");
+    }
+
+    // 2. Build Prompt
     const categoriesString = ADOBE_CATEGORIES.map(c => `${c.id}. ${c.name}`).join('\n');
     const systemPrompt = `
       You are Hacky MetaGen 3.7, a senior SEO expert for Adobe Stock.
-      Your goal is to generate metadata for this ${fileObj.type} to maximize discoverability.
-      ${isVideo ? "Note: The input provided is a sequence of 5 frames extracted from the video to represent the WHOLE video action/story." : ""}
-      STRICT RULES:
+      You are processing a batch of ${validAssets.length} distinct assets.
+      
+      YOUR GOAL: Generate metadata for EACH of the ${validAssets.length} input assets.
+      
+      STRICT RULES FOR EACH ASSET:
       1. **Title**: 100-125 characters. Natural, readable, descriptive. Include high-value keywords. NO keyword stuffing.
       2. **Keywords**: Generate EXACTLY 49 keywords. Comma-separated string.
          - **CRITICAL:** Do NOT generate more than 49 keywords. Stop exactly at 49.
-         **ADOBE STOCK RANKING OPTIMIZATION (CRITICAL):**
-         - **The first 5-10 keywords MUST be the most impactful, highly relevant, and descriptive terms.** This primarily determines search ranking.
-         - Start with the absolute main subject, core concept, and primary visual elements.
-         - Do NOT start with generic terms (like "vector", "illustration", "background") unless they are the primary intent.
-         **DISTRIBUTION REQUIREMENTS (After the top 10 prioritized keywords):**
-         - **Short-tail (1-2 words)**: ~12-13 keywords (25-30%)
-         - **Mid-tail (2-3 words)**: ~21-22 keywords (40-45%)
-         - **Long-tail (4+ words)**: ~15 keywords (30%)
-         **CONTENT RULES:**
-         - NO brand names, trademarks, or personal names.
-         - Describe the subject, style, mood, lighting, and concept.
+         - **Priority:** First 5-10 keywords must be most relevant.
+         - **Distribution:** Short-tail (1-2 words): ~30%, Mid-tail (2-3 words): ~45%, Long-tail (4+ words): ~25%.
+         - **Content:** NO brand names, trademarks, or personal names.
       3. **Category**: Choose the single most appropriate category ID (1-21) from the list below:
       ${categoriesString}
-      4. **Approval Prediction**: Act as a strict Adobe Stock reviewer. Analyze the image for technical issues (artifacts, noise, blur, over-filtering, trademarks/logos), and Composition.
-         - Status: "Accepted" or "Rejected".
-         - Reason: If rejected, give a very short reason (e.g., "Artifacts present", "Visible Logo", "Poor Focus"). If accepted, leave empty or "Good quality".
-      OUTPUT FORMAT (JSON ONLY):
-      {
-        "title": "string",
-        "keywords": "string (comma separated)",
-        "category_id": integer,
-        "approval_status": "Accepted" or "Rejected",
-        "approval_reason": "string"
-      }
+      4. **Approval Prediction**: Status ("Accepted" or "Rejected") and Reason.
+
+      OUTPUT FORMAT (JSON ARRAY ONLY):
+      Return a JSON Array containing exactly ${validAssets.length} objects.
+      The order of objects MUST match the order of the input assets provided below (Asset 1, Asset 2, etc.).
+      
+      [
+        {
+          "title": "string",
+          "keywords": "string (comma separated)",
+          "category_id": integer,
+          "approval_status": "Accepted" or "Rejected",
+          "approval_reason": "string"
+        },
+        ...
+      ]
     `;
 
     const contentParts = [{ text: systemPrompt }];
-    if (isVideo && Array.isArray(base64Data)) {
-      base64Data.forEach(frameData => {
-        contentParts.push({ inlineData: { mimeType: mimeType, data: frameData } });
-      });
-    } else {
-      contentParts.push({ inlineData: { mimeType: mimeType, data: base64Data } });
-    }
+    
+    validAssets.forEach((asset, index) => {
+        contentParts.push({ text: `\n\n--- INPUT ASSET ${index + 1} ---` });
+        if (asset.isVideo && Array.isArray(asset.data)) {
+            asset.data.forEach(frameData => {
+                contentParts.push({ inlineData: { mimeType: asset.mimeType, data: frameData } });
+            });
+        } else {
+            contentParts.push({ inlineData: { mimeType: asset.mimeType, data: asset.data } });
+        }
+    });
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60000); 
+    const timeoutId = setTimeout(() => controller.abort(), 90000); // 90s timeout for batch
 
     try {
-        // Client Mode: Send data directly to Google
         const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${activeKey}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                contents: [{ parts: contentParts }],
+                contents: [{ role: "user", parts: contentParts }],
                 generationConfig: { responseMimeType: "application/json" }
             }),
             signal: controller.signal
@@ -568,27 +691,40 @@ const HackyMetaGenApp = () => {
         const data = await response.json();
         if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
         if (!data.candidates || !data.candidates[0]) throw new Error("No candidates returned from AI");
-        const candidate = data.candidates[0];
-        if (candidate.finishReason === "SAFETY") throw new Error("Generation blocked by safety settings");
-        if (!candidate.content?.parts?.[0]) throw new Error("No content generated");
-
-        let resultText = candidate.content.parts[0].text;
-        const firstBrace = resultText.indexOf('{');
-        const lastBrace = resultText.lastIndexOf('}');
-        if (firstBrace !== -1 && lastBrace !== -1) {
-            resultText = resultText.substring(firstBrace, lastBrace + 1);
-        } else {
-            resultText = resultText.replace(/```json/g, '').replace(/```/g, '').trim();
+        
+        let resultText = data.candidates[0].content.parts[0].text;
+        // Clean markdown
+        resultText = resultText.replace(/```json/g, '').replace(/```/g, '').trim();
+        
+        let parsedResult;
+        try {
+            parsedResult = JSON.parse(resultText);
+        } catch (e) {
+            throw new Error("Failed to parse AI response as JSON");
         }
-        if (!resultText.trim()) throw new Error("No JSON found in response");
 
-        const parsedResult = JSON.parse(resultText);
-        if (parsedResult.keywords && typeof parsedResult.keywords === 'string') {
-          let kws = parsedResult.keywords.split(',').map(k => k.trim()).filter(k => k.length > 0);
-          if (kws.length > 49) kws = kws.slice(0, 49);
-          parsedResult.keywords = kws.join(', ');
+        if (!Array.isArray(parsedResult)) {
+            // Attempt to handle single object return if AI failed to batch
+            if (typeof parsedResult === 'object') parsedResult = [parsedResult];
+            else throw new Error("AI did not return a JSON Array");
         }
-        return parsedResult;
+
+        // Map results back to IDs
+        const finalResults = {};
+        validAssets.forEach((asset, idx) => {
+            if (parsedResult[idx]) {
+                // Post-process keywords
+                if (parsedResult[idx].keywords && typeof parsedResult[idx].keywords === 'string') {
+                    let kws = parsedResult[idx].keywords.split(',').map(k => k.trim()).filter(k => k.length > 0);
+                    if (kws.length > 49) kws = kws.slice(0, 49);
+                    parsedResult[idx].keywords = kws.join(', ');
+                }
+                finalResults[asset.id] = parsedResult[idx];
+            }
+        });
+        
+        return finalResults;
+
     } catch (e) {
         throw e;
     } finally {
@@ -598,28 +734,41 @@ const HackyMetaGenApp = () => {
 
   const runBatchGeneration = async (filesToProcess) => {
      const nextChain = processingMutex.current.catch(() => {}).then(async () => {
-         for (const file of filesToProcess) {
+         // Chunk files into batches
+         const chunks = [];
+         for (let i = 0; i < filesToProcess.length; i += BATCH_SIZE) {
+             chunks.push(filesToProcess.slice(i, i + BATCH_SIZE));
+         }
+
+         for (const chunk of chunks) {
+            // Check if files still exist in state
+            const currentFiles = filesRef.current;
+            const validChunk = chunk.filter(f => currentFiles.find(cf => cf.id === f.id));
+            if (validChunk.length === 0) continue;
+
             let retries = 1; 
             let success = false;
             let lastError = null;
 
-            if (!filesRef.current.find(f => f.id === file.id)) continue;
-
             while (retries > 0 && !success) {
                 try {
-                    const jsonResult = await performGeneration(file);
-                    const kwArray = jsonResult.keywords.split(',').map(k => k.trim());
-                    const analysis = {
-                        short: kwArray.filter(k => k.split(' ').length <= 2).length,
-                        mid: kwArray.filter(k => k.split(' ').length === 3).length,
-                        long: kwArray.filter(k => k.split(' ').length >= 4).length,
-                        total: kwArray.length
-                    };
-                    setFiles(prev => {
-                        if (!prev.find(f => f.id === file.id)) return prev;
-                        return prev.map(f => {
-                            if (f.id !== file.id) return f;
-                            const predictedCategory = jsonResult.category_id || 8;
+                    const batchResults = await generateBatchMetadata(validChunk);
+                    
+                    setFiles(prev => prev.map(f => {
+                        const result = batchResults[f.id];
+                        if (result) {
+                            // Apply Default Keywords Logic Here
+                            const finalKeywords = mergeKeywords(result.keywords);
+                            
+                            const kwArray = finalKeywords.split(',').map(k => k.trim());
+                            const analysis = {
+                                short: kwArray.filter(k => k.split(' ').length <= 2).length,
+                                mid: kwArray.filter(k => k.split(' ').length === 3).length,
+                                long: kwArray.filter(k => k.split(' ').length >= 4).length,
+                                total: kwArray.length
+                            };
+                            
+                            const predictedCategory = result.category_id || 8;
                             const finalCategory = useAiCategory ? predictedCategory : 8;
                             const currentCsvExt = csvExtensionRef.current;
                             const currentPreserve = preserveExtensionRef.current;
@@ -633,29 +782,34 @@ const HackyMetaGenApp = () => {
                                     finalName = f.file.name.replace(/\.[^/.]+$/, "") + "." + currentCsvExt;
                                 }
                             }
+
                             return { 
                                 ...f, 
                                 status: 'complete', 
-                                metadata: jsonResult,
+                                metadata: { ...result, keywords: finalKeywords },
                                 keywordAnalysis: analysis,
                                 aiCategoryId: predictedCategory, 
                                 categoryId: finalCategory,
                                 name: finalName
                             };
-                        });
-                    });
+                        }
+                        // If file was in chunk but no result returned (unlikely unless array mismatch), return f
+                        return f;
+                    }));
                     success = true;
-                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    await new Promise(resolve => setTimeout(resolve, 1000)); // Small delay between batches
                 } catch (error) {
-                    console.error(`Error processing ${file.name}:`, error);
+                    console.error(`Error processing batch:`, error);
                     lastError = error;
                     const errorStr = error.toString();
                     if (errorStr.includes("API Key") || errorStr.includes("403") || errorStr.includes("400") || errorStr.includes("Invalid") || errorStr.includes("Quota")) {
                          setIsKeyInvalid(true);
                          setIsKeySaved(false);
                          setUserApiKey('');
+                         retries = 0; // Stop retrying on auth errors
+                    } else {
+                        retries--;
                     }
-                    retries = 0; 
                 }
             }
 
@@ -669,10 +823,12 @@ const HackyMetaGenApp = () => {
                         displayError = msg;
                     }
                 }
-                setFiles(prev => {
-                    if (!prev.find(f => f.id === file.id)) return prev;
-                    return prev.map(f => f.id === file.id ? { ...f, status: 'error', errorMessage: displayError } : f);
-                });
+                setFiles(prev => prev.map(f => {
+                    if (validChunk.find(vf => vf.id === f.id)) {
+                        return { ...f, status: 'error', errorMessage: displayError };
+                    }
+                    return f;
+                }));
             }
          }
      });
@@ -788,8 +944,16 @@ const HackyMetaGenApp = () => {
     if (!fileObj) return;
     setFiles(prev => prev.map(f => f.id === fileObj.id ? { ...f, status: 'processing' } : f));
     try {
-      const jsonResult = await performGeneration(fileObj);
-      const kwArray = jsonResult.keywords.split(',').map(k => k.trim());
+      // Use the batch function but with a single item
+      const batchResults = await generateBatchMetadata([fileObj]);
+      const jsonResult = batchResults[fileObj.id];
+      
+      if (!jsonResult) throw new Error("No result returned from AI");
+
+      // Apply Default Keywords Logic Here
+      const finalKeywords = mergeKeywords(jsonResult.keywords);
+
+      const kwArray = finalKeywords.split(',').map(k => k.trim());
       const analysis = {
         short: kwArray.filter(k => k.split(' ').length <= 2).length,
         mid: kwArray.filter(k => k.split(' ').length === 3).length,
@@ -813,7 +977,7 @@ const HackyMetaGenApp = () => {
         return { 
           ...f, 
           status: 'complete', 
-          metadata: jsonResult,
+          metadata: { ...jsonResult, keywords: finalKeywords },
           keywordAnalysis: analysis,
           aiCategoryId: jsonResult.category_id,
           categoryId: useAiCategory ? (jsonResult.category_id || 8) : 8,
@@ -1132,143 +1296,166 @@ useEffect(() => {
         </div>
       )}
 
-      {/* 1. HEADER */}
-      <header className={`px-6 py-4 flex items-center justify-between border-b ${theme === 'dark' ? 'border-slate-800 bg-slate-900/50' : 'border-slate-200 bg-white'}`}>
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white font-bold text-lg shadow-lg shadow-blue-500/30">H</div>
-          <div>
-            <h1 className="font-bold text-lg tracking-tight hidden sm:inline">
-              <span className={theme === 'dark' ? 'text-white' : 'text-slate-900'}>Hacky</span>{' '}
-              <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400">MetaGen</span>
-              <span className="text-xs align-top bg-indigo-500/20 text-indigo-500 px-1.5 py-0.5 rounded ml-1">3.7</span>
-            </h1>
-          </div>
-        </div>
-        
-        <div className="flex items-center gap-0.2">
-          
-          {/* Messages */}
-          <div className="relative h-4 hidden md:flex items-center justify-end w-64 overflow-hidden pointer-events-none">
-             {/* Success */}
-             <span className={`absolute right-0 text-xs font-semibold text-green-500 transition-all duration-500 ${showSuccessMessage ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-4'}`}>
-               Key Inserted to The Browser Storage
-             </span>
-             {/* Error */}
-             <span className={`absolute right-0 text-xs font-semibold text-red-500 transition-all duration-500 ${showErrorMessage ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-4'}`}>
-               Please Recheck Your Api Key and Enter
-             </span>
-          </div>
-
-          {/* API Key Input & Apply Button */}
-          <div className="flex items-center gap-2">
-            <input 
-              type="text" 
-              placeholder={isKeyInvalid ? "Check Or Replace" : (isKeySaved ? "System Ready" : "Enter Gemini API Key")}
-              value={userApiKey}
-              onChange={(e) => {
-                const val = e.target.value;
-                setUserApiKey(val);
-                
-                // If user clears the box, remove the stored key immediately
-                if (val === '') {
-                  localStorage.removeItem('hackymetagen_api_key');
-                  apiKeyRef.current = '';
-                  setIsKeySaved(false);
-                } else {
-                  // If editing, mark as not saved until they click check
-                  setIsKeySaved(false); 
-                }
-                
-                setIsKeyInvalid(false); 
-              }}
-              className={`text-xs px-3 py-2 rounded-lg border transition-all w-20 focus:w-48 sm:w-32 sm:focus:w-64 ${
-                isKeyInvalid 
-                  ? 'bg-red-500/10 border-red-500 text-red-500 placeholder-red-500 font-semibold focus:border-red-600'
-                  : isKeySaved
-                    ? 'bg-green-500/10 border-green-500 text-green-500 placeholder-green-500 font-semibold'
-                    : theme === 'dark' 
-                      ? 'bg-slate-800 border-slate-700 text-white placeholder-slate-500 focus:border-indigo-500' 
-                      : 'bg-slate-100 border-slate-300 text-slate-900 focus:border-indigo-500'
-              }`}
-            />
-            <button 
-              onClick={handleApplyKey}
-              disabled={isVerifying}
-              className={`p-2 rounded-lg border transition-colors ${
-                isKeyInvalid
-                  ? 'bg-red-500 border-red-500 text-white hover:bg-red-600'
-                  : isKeySaved
-                    ? 'bg-green-500 border-green-500 text-white'
-                    : theme === 'dark' 
-                      ? 'border-slate-700 hover:bg-slate-800 text-slate-400 hover:text-green-400' 
-                      : 'border-slate-300 hover:bg-slate-100 text-slate-600 hover:text-green-600'
-              }`}
-              title="Apply & Save API Key"
-            >
-              {isVerifying ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
-            </button>
-            
-            <button 
-              onClick={() => setShowTutorial(true)}
-              className={`p-2 rounded-lg border transition-colors ${
-                theme === 'dark' 
-                  ? 'border-slate-700 hover:bg-slate-800 text-slate-400 hover:text-indigo-400' 
-                  : 'border-slate-300 hover:bg-slate-100 text-slate-600 hover:text-indigo-600'
-              }`}
-              title="How to get API Key"
-            >
-              <Info size={14} />
-            </button>
-          </div>
-
-          <div className={`w-px h-6 mx-2 hidden sm:block ${theme === 'dark' ? 'bg-slate-800' : 'bg-slate-200'}`}></div>
-{/* 粕 Notification Toggle */}
-<button
-  onClick={() => setNotificationsEnabled(p => !p)}
-  className={`p-2 rounded-full transition-colors ${
+{/* 1. HEADER */}
+<header
+  className={`px-6 py-4 flex items-center justify-between border-b ${
     theme === 'dark'
-      ? 'hover:bg-slate-800 text-slate-400'
-      : 'hover:bg-slate-100 text-slate-600'
-  }`}
-  title={notificationsEnabled ? 'Notification sound ON' : 'Notification sound OFF'}
->
-  {notificationsEnabled ? <Bell size={18} /> : <BellOff size={18} />}
-</button>
-
-{/* 嫌 Dark Mode Toggle */}
-<button
-  onClick={handleToggleTheme}
-  className={`p-2 rounded-full transition-colors ${
-    theme === 'dark'
-      ? 'hover:bg-slate-800 text-slate-400'
-      : 'hover:bg-slate-100 text-slate-600'
+      ? 'border-slate-800 bg-slate-900/50'
+      : 'border-slate-200 bg-white'
   }`}
 >
-  {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
-</button>
-                    <button className="hidden sm:flex items-center gap-2 px-3 py-1.5 text-sm font-medium bg-slate-800/50 hover:bg-slate-800 rounded-full border border-slate-700 transition-all">
-            <HelpCircle size={16} className="text-indigo-400" />
-            <span>Help</span>
-          </button>
-          
-        </div>
-      </header>
+  {/* LEFT: LOGO + TITLE (REFRESH) */}
+  <div
+    onClick={() => window.location.reload()}
+    className="flex items-center gap-3 cursor-pointer select-none hover:opacity-90 transition-opacity"
+    title="Refresh page"
+  >
+    <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white font-bold text-lg shadow-lg shadow-blue-500/30">
+      H
+    </div>
+    <h1 className="font-bold text-lg tracking-tight hidden sm:inline">
+      <span className={theme === 'dark' ? 'text-white' : 'text-slate-900'}>
+        Hacky
+      </span>{' '}
+      <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400">
+        MetaGen
+      </span>
+      <span className="text-xs align-top bg-indigo-500/20 text-indigo-500 px-1.5 py-0.5 rounded ml-1">
+        3.7
+      </span>
+    </h1>
+  </div>
+
+  {/* RIGHT: CONTROLS */}
+  <div className="flex items-center gap-2">
+    {/* Messages */}
+    <div className="relative h-4 hidden md:flex items-center justify-end w-64 overflow-hidden pointer-events-none">
+      <span
+        className={`absolute right-0 text-xs font-semibold text-green-500 transition-all duration-500 ${
+          showSuccessMessage ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-4'
+        }`}
+      >
+        Key Inserted to The Browser Storage
+      </span>
+      <span
+        className={`absolute right-0 text-xs font-semibold text-red-500 transition-all duration-500 ${
+          showErrorMessage ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-4'
+        }`}
+      >
+        Please Recheck Your Api Key and Enter
+      </span>
+    </div>
+
+    {/* API Key Input */}
+    <div className="flex items-center gap-2">
+      <input
+        type="text"
+        placeholder={
+          isKeyInvalid
+            ? 'Check Or Replace'
+            : isKeySaved
+            ? 'System Ready'
+            : 'Enter Gemini API Key'
+        }
+        value={userApiKey}
+        onChange={(e) => {
+          const val = e.target.value;
+          setUserApiKey(val);
+
+          if (val === '') {
+            localStorage.removeItem('hackymetagen_api_key');
+            apiKeyRef.current = '';
+            setIsKeySaved(false);
+          } else {
+            setIsKeySaved(false);
+          }
+          setIsKeyInvalid(false);
+        }}
+        className={`text-xs px-3 py-2 rounded-lg border transition-all w-24 focus:w-48 sm:w-32 sm:focus:w-64 ${
+          isKeyInvalid
+            ? 'bg-red-500/10 border-red-500 text-red-500'
+            : isKeySaved
+            ? 'bg-green-500/10 border-green-500 text-green-500'
+            : theme === 'dark'
+            ? 'bg-slate-800 border-slate-700 text-white'
+            : 'bg-slate-100 border-slate-300 text-slate-900'
+        }`}
+      />
+
+      <button
+        onClick={handleApplyKey}
+        disabled={isVerifying}
+        className="p-2 rounded-lg border border-slate-700 hover:bg-slate-800 text-slate-400"
+      >
+        {isVerifying ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+      </button>
+
+      <button
+        onClick={() => setShowTutorial(true)}
+        className="p-2 rounded-lg border border-slate-700 hover:bg-slate-800 text-slate-400"
+        title="How to get API Key"
+      >
+        <Info size={14} />
+      </button>
+    </div>
+
+    <div className="w-px h-6 mx-2 hidden sm:block bg-slate-700" />
+
+    {/* Notification Toggle */}
+    <button
+      onClick={() => setNotificationsEnabled((p) => !p)}
+      className="p-2 rounded-full hover:bg-slate-800 text-slate-400"
+      title={notificationsEnabled ? 'Notification sound ON' : 'Notification sound OFF'}
+    >
+      {notificationsEnabled ? <Bell size={18} /> : <BellOff size={18} />}
+    </button>
+
+    {/* Theme Toggle */}
+    <button
+      onClick={handleToggleTheme}
+      className="p-2 rounded-full hover:bg-slate-800 text-slate-400"
+    >
+      {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
+    </button>
+
+    {/* Help */}
+    <button className="hidden sm:flex items-center gap-2 px-3 py-1.5 text-sm font-medium bg-slate-800/50 hover:bg-slate-800 rounded-full border border-slate-700 transition-all">
+      <HelpCircle size={16} className="text-indigo-400" />
+      <span>Help</span>
+    </button>
+  </div>
+</header>
 
       {/* 2. HERO SECTION */}
       {files.length === 0 ? (
         <div className="max-w-4xl mx-auto mt-12 px-6 text-center mb-12">
           {/* Animated Feature Badge */}
-          <span className={`inline-block px-3 py-1 mb-4 text-xs font-semibold tracking-wider text-indigo-400 uppercase bg-indigo-500/10 rounded-full border border-indigo-500/20 transition-all duration-300 transform ${fadeClass}`}>
-            New Feature: {features[featureIndex].type === 'jsx' ? features[featureIndex].content : features[featureIndex].content}
-          </span>
+          {/* Animated Feature Badge */}
+<span
+  className={`inline-flex items-center gap-2 px-3 py-1 mb-4
+  text-xs font-semibold tracking-wider text-indigo-400 uppercase
+  bg-indigo-500/10 rounded-full border border-indigo-500/20
+  transition-all duration-300 transform
+  whitespace-nowrap truncate max-w-full ${fadeClass}`}
+>
+  New Feature :
+  {features[featureIndex].type === 'jsx'
+    ? features[featureIndex].content
+    : features[featureIndex].content}
+</span>
+
           <h2 className="text-4xl md:text-5xl font-extrabold tracking-tight mb-4">
             <span className={theme === 'dark' ? 'text-white' : 'text-slate-900'}>Adobe Stock</span>{' '}
             <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400">Metadata Generator</span>
           </h2>
-          <p className={`text-lg max-w-2xl mx-auto mb-8 ${theme === 'dark' ? 'text-slate-400' : 'text-slate-600'}`}>
-            Total automation for your image, video, & vector assets. Just upload, let AI handle the rest. 
-            Optimized for Adobe Stock SEO.
+          <p className={`text-lg max-w-2xl mx-auto mb-4 ${theme === 'dark' ? 'text-slate-400' : 'text-slate-600'}`}>
+            <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400">Smart</span> All In One AI automation for your image, video, & vector assets. Just upload, let AI handle the rest. 
+            SEO Optimized for Adobe Stock.
           </p>
+          <p className="text-sm max-w-2xl mx-auto text-blue-400 font-semibold mb-8">
+            (Important: Because of API usage limits, the Gemini API key must be replaced with a new one after every 20-50 processed images.)
+          </p>
+            
         </div>
       ) : (
          /* CONDITIONAL HERO: Shows progress on the Title when files exist */
@@ -1365,20 +1552,47 @@ useEffect(() => {
             </button>
           )}
 
+          {/* Default Keywords Input (Moved Here) */}
+          <div className="mt-1">
+            <div className="flex items-center gap-1 mb-1 pl-1">
+                <Tags size={12} className={theme === 'dark' ? 'text-indigo-400' : 'text-indigo-600'} />
+                <label className={`text-[10px] font-bold uppercase tracking-wider ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>
+                Default Keywords (Appended)
+                </label>
+            </div>
+            <textarea
+                value={defaultKeywords}
+                onChange={(e) => setDefaultKeywords(e.target.value)}
+                placeholder="e.g. vector, illustration, abstract (comma separated)"
+                rows={2}
+                className={`w-full text-xs p-2 rounded-xl border font-medium transition-all resize-none ${
+                theme === 'dark' 
+                    ? 'bg-slate-800 border-slate-700 text-slate-300 focus:border-indigo-500 focus:bg-slate-800' 
+                    : 'bg-white border-slate-300 text-slate-600 focus:border-indigo-500'
+                }`}
+            />
+            <p className="text-[10px] text-slate-500 pl-1 mt-0.5">
+                Automatically removes short-tail keywords to make room.
+            </p>
+          </div>
+
 {/* Auto Generate & Default Category (Flat Compact Style) */}
 <div className="flex gap-2 mt-1">
 
   {/* Auto Generate */}
   <button
     onClick={() => setIsAutoGenerate(!isAutoGenerate)}
-    className="flex-1 h-10 px-3 rounded-lg
+    className={`flex-1 h-10 px-3 rounded-lg
                flex items-center justify-center gap-2
                text-xs font-medium whitespace-nowrap
-               bg-green-600 hover:bg-green-700 text-white
-               transition-colors"
+               transition-colors
+               ${isAutoGenerate 
+                 ? 'bg-green-600 hover:bg-green-700 text-white' 
+                 : 'bg-slate-200 hover:bg-slate-300 text-slate-600 dark:bg-slate-700 dark:text-slate-300'
+               }`}
   >
-    <Zap size={14} className="relative top-[1px]" />
-    Auto Generate
+    {isAutoGenerate ? <Zap size={14} className="relative top-[1px]" /> : <ZapOff size={14} className="relative top-[1px]" />}
+    {isAutoGenerate ? 'Auto Gen: ON' : 'Auto Gen: OFF'}
   </button>
 
   {/* Default / AI Category */}
@@ -1443,7 +1657,7 @@ useEffect(() => {
           </div>
 
           {/* Batch List */}
-          <div className={`flex-1 overflow-y-auto rounded-xl border h-48 lg:h-full lg:flex-1 ${theme === 'dark' ? 'bg-slate-800/30 border-slate-800' : 'bg-white border-slate-200'} p-2 space-y-2`}>
+          <div className={`flex-1 overflow-y-auto rounded-xl border h-48 lg:h-full lg:flex-1 ${theme === 'dark' ? 'bg-slate-800/30 border-slate-800' : 'bg-white border-slate-200'} p-2 space-y-2 mt-2`}>
             {files.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-slate-500 opacity-60">
                 <p className="text-sm">No files uploaded yet</p>
@@ -1632,8 +1846,8 @@ useEffect(() => {
                   >
                     <Upload size={48} className="text-blue-500 animate-bounce mb-4" />
                     <p className={`text-lg font-medium mb-1 ${theme === 'dark' ? 'text-slate-300' : 'text-slate-600'}`}>Drop Images or Videos here</p>
-                    <p className="text-sm text-indigo-500 font-medium mb-4 hover:underline">Click to browse on your PC</p>
-                    
+                    <p className="text-sm text-slate-500 font-medium mb-4 hover:underline">Click to browse on your PC</p>
+                    <p className="text-[12px] text-white/80 font-medium mb-4">Important: Upload at least 3 images per batch and Keep Disable Auto Generate Button to maximize your API key value.</p>
                     <div className={`text-xs text-center max-w-sm leading-relaxed ${theme === 'dark' ? 'text-slate-500' : 'text-slate-500'}`}>
                       <p className="font-semibold mb-1 uppercase tracking-wider text-slate-400">Supported Formats</p>
                       <p>
@@ -2068,4 +2282,4 @@ useEffect(() => {
   );
 };
 
-export default HackyMetaGenApp;
+export default App;
