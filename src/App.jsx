@@ -26,13 +26,14 @@ const HackyMetaGenApp = () => {
   const [contentType, setContentType] = useState('image');
   const [viewMode, setViewMode] = useState('batch');
 
-  /* -------------------- 🔔 NOTIFICATION STATE (NEW) -------------------- */
-  const [notificationsEnabled, setNotificationsEnabled] = useState(() => {
-    const saved = localStorage.getItem('hackymetagen_notify');
-    return saved !== null ? JSON.parse(saved) : true;
-  });
 
-  const hasNotifiedRef = useRef(false);
+/* 🔔 Notification Sound */
+const [notificationsEnabled, setNotificationsEnabled] = useState(() => {
+  const saved = localStorage.getItem('hackymetagen_notify');
+  return saved !== null ? JSON.parse(saved) : true;
+});
+const hasNotifiedRef = useRef(false);
+
 
   /* -------------------- EFFECTS -------------------- */
   useEffect(() => {
@@ -48,24 +49,25 @@ const HackyMetaGenApp = () => {
   const completeFiles = files.filter(f => f.status === 'complete');
   const allFilesComplete = files.length > 0 && files.every(f => f.status === 'complete');
 
-  /* 🔔 PLAY SOUND WHEN ALL COMPLETE */
-  useEffect(() => {
-    if (!notificationsEnabled) return;
+// 🔔 Play sound when all files complete (once)
+useEffect(() => {
+  if (!notificationsEnabled) return;
 
-    if (allFilesComplete && !hasNotifiedRef.current) {
-      hasNotifiedRef.current = true;
+  if (allFilesComplete && !hasNotifiedRef.current) {
+    hasNotifiedRef.current = true;
 
-      const audio = new Audio(
-        'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQAAAAA='
-      );
-      audio.volume = 0.4;
-      audio.play().catch(() => {});
-    }
+    const audio = new Audio(
+      'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQAAAAA='
+    );
+    audio.volume = 0.35;
+    audio.play().catch(() => {});
+  }
 
-    if (!allFilesComplete) {
-      hasNotifiedRef.current = false;
-    }
-  }, [allFilesComplete, notificationsEnabled]);
+  if (!allFilesComplete) {
+    hasNotifiedRef.current = false;
+  }
+}, [allFilesComplete, notificationsEnabled]);
+
 
   /* -------------------- UI HELPERS -------------------- */
   const handleToggleTheme = () => {
@@ -106,14 +108,18 @@ const HackyMetaGenApp = () => {
 
         <div className="flex items-center gap-2">
 
-          {/* 🔔 NOTIFICATION TOGGLE (NEW) */}
-          <button
-            onClick={() => setNotificationsEnabled(p => !p)}
-            className="p-2 rounded-full hover:bg-slate-800 text-slate-400"
-            title={notificationsEnabled ? 'Notification sound ON' : 'Notification sound OFF'}
-          >
-            {notificationsEnabled ? <Bell size={18} /> : <BellOff size={18} />}
-          </button>
+{/* 🔔 Notification Toggle */}
+<button
+  onClick={() => setNotificationsEnabled(prev => !prev)}
+  className={`p-2 rounded-full transition-colors ${
+    theme === 'dark'
+      ? 'hover:bg-slate-800 text-slate-400'
+      : 'hover:bg-slate-100 text-slate-600'
+  }`}
+  title={notificationsEnabled ? 'Notification sound ON' : 'Notification sound OFF'}
+>
+  {notificationsEnabled ? <Bell size={18} /> : <BellOff size={18} />}
+</button>
 
           {/* 🌙 THEME TOGGLE */}
           <button
