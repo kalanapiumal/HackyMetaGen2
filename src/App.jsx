@@ -1298,6 +1298,10 @@ useEffect(() => {
 >
   {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
 </button>
+                    <button className="hidden sm:flex items-center gap-2 px-3 py-1.5 text-sm font-medium bg-slate-800/50 hover:bg-slate-800 rounded-full border border-slate-700 transition-all">
+            <HelpCircle size={16} className="text-indigo-400" />
+            <span>Help</span>
+          </button>
           
         </div>
       </header>
