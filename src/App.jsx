@@ -79,7 +79,7 @@ const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 const GROQ_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct";
 
 const OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
-const OPENAI_MODEL = "gpt-4o-mini";
+const OPENAI_MODEL = "gpt-4o";
 
 const ADOBE_CATEGORIES = [
   { id: 1, name: "Animals" },
@@ -133,7 +133,7 @@ const LEGAL_CONTENT = {
             <li>We <strong>do not</strong> permanently store, save, or claim ownership of your uploaded assets.</li>
         </ul>
         <p><strong>2. API Keys & Local Storage:</strong> If you provide your own API Keys, they are stored locally in your browser's <code>localStorage</code> on your device. It is not saved to our databases. You retain full control over your key and can delete it at any time by clearing the input field.</p>
-        <p><strong>3. Third-Party Data Sharing:</strong> This tool utilizes third-party AI APIs (Google Gemini or Groq) to generate metadata. By using this tool, you acknowledge that your input data (image frames and prompts) is sent to these providers for processing. Please refer to their respective Privacy Policies.</p>
+        <p><strong>3. Third-Party Data Sharing:</strong> This tool utilizes third-party AI APIs to generate metadata. By using this tool, you acknowledge that your input data (image frames and prompts) is sent to these providers for processing. Please refer to their respective Privacy Policies.</p>
         <p><strong>4. Usage Analytics:</strong> We may collect anonymous, non-identifiable usage statistics (e.g., number of generations) to improve service stability, but this does not include the content of your uploads.</p>
       </div>
     )
