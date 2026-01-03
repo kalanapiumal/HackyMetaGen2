@@ -59,9 +59,7 @@ const getEnvBool = (key, defaultVal) => {
 };
 
 // --- CONFIGURATION ---
-// 1. MANUAL_CONFIG: Set these to true/false to override environment variables.
-//    USE_BACKEND: Set to true ONLY if you have deployed a backend at /api/generate.
-//    Default: false (Client-side for Canvas testing)
+// 1. MANUAL_CONFIG: Set these to true to force backend usage locally or in specific builds.
 const MANUAL_USE_BACKEND = true; 
 const MANUAL_REQUIRE_USER_API_KEY = true;
 
@@ -415,7 +413,9 @@ const App = () => {
   const completeFiles = files.filter(f => f.status === 'complete');
   const allFilesComplete = files.length > 0 && files.every(f => f.status === 'complete');
   const totalFiles = files.length;
-  
+  const progressPercent = totalFiles > 0 ? (completeFiles.length / totalFiles) * 100 : 0;
+
+  // Defined as mixed content array using useMemo
   const features = useMemo(() => [
     {type: 'jsx', content: (<span className="flex items-center gap-2 whitespace-nowrap truncate max-w-full">Custom Keywords (Appended) Supports<span className="text-[10px] px-1.5 py-0.5 rounded bg-white text-black font-bold uppercase">New</span></span>)},
     {type: 'jsx', content: (<span className="flex items-center gap-2 whitespace-nowrap truncate max-w-full">Smart Batch Processing (Quota Saver)<span className="text-[10px] px-1.5 py-0.5 rounded bg-white text-black font-bold uppercase">New</span></span>)},
@@ -663,8 +663,11 @@ const App = () => {
             if (['jpg', 'jpeg'].includes(ext)) mimeType = 'image/jpeg';
             else if (ext === 'png') mimeType = 'image/png';
             else if (ext === 'webp') mimeType = 'image/webp';
+            else if (['ai', 'eps', 'svg'].includes(ext)) mimeType = 'image/png'; 
             else mimeType = 'image/jpeg';
         }
+        // Force valid mime type if empty
+        if (!mimeType || mimeType === '') mimeType = 'image/jpeg';
     }
     return { mimeType, data: base64Data, isVideo };
   };
@@ -675,7 +678,6 @@ const App = () => {
     else if (aiModel === 'chatgpt') keyKey = 'hackymetagen_openai_api_key';
     else keyKey = 'hackymetagen_api_key';
     
-    // Check both ref and input field to ensure we get the latest key even if not saved via "Check" button
     let activeKey = apiKeyRef.current || localStorage.getItem(keyKey) || userApiKey || apiKey;
 
     if (REQUIRE_USER_API_KEY && !activeKey) {
