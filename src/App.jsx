@@ -59,25 +59,19 @@ const getEnvBool = (key, defaultVal) => {
 };
 
 // --- CONFIGURATION ---
-// 1. USE_BACKEND: If true, sends requests to /api/generate (hides logic). 
-//    Default: false (Client-side for Canvas testing)
 const USE_BACKEND = getEnvBool('NEXT_PUBLIC_USE_BACKEND', true);
-
-// 2. REQUIRE_USER_API_KEY: If true, forces user to enter a key in the UI. 
-//    Default: false (Canvas testing uses system key if available/empty)
 const REQUIRE_USER_API_KEY = getEnvBool('NEXT_PUBLIC_REQUIRE_USER_API_KEY', true);
 
 // --- Constants ---
 const MAX_TITLE_LENGTH = 120;
 const MIN_TITLE_LENGTH = 100; 
 const TARGET_KEYWORD_COUNT = 49;
-const BATCH_SIZE = 3; // Process 3 images per API call to save quota
-// The execution environment provides the key at runtime for simple scripts, 
-// but for this full UI app, we allow user input or fallback.
+const BATCH_SIZE = 3; 
 const apiKey = ""; 
 
 // --- API CONSTANTS ---
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
+// Using Llama 4 Scout as requested
 const GROQ_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct";
 
 const OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
@@ -160,7 +154,8 @@ const LEGAL_CONTENT = {
   }
 };
 
-// --- HELPER COMPONENTS ---
+// --- HELPER COMPONENTS AND FUNCTIONS (OUTSIDE APP) ---
+
 const StatCard = ({ icon, label, value, accent }) => {
   const accents = {
     blue: 'text-blue-400 bg-blue-500/10',
@@ -171,34 +166,18 @@ const StatCard = ({ icon, label, value, accent }) => {
   };
 
   return (
-    <div
-      className="
-        flex items-center gap-3
-        px-3 py-2
-        rounded-lg border
-        bg-slate-800/60 border-slate-700
-        flex-1 min-w-0
-      "
-    >
-      <div
-        className={`w-8 h-8 rounded-md flex items-center justify-center ${accents[accent]}`}
-      >
+    <div className="flex items-center gap-3 px-3 py-2 rounded-lg border bg-slate-800/60 border-slate-700 flex-1 min-w-0">
+      <div className={`w-8 h-8 rounded-md flex items-center justify-center ${accents[accent]}`}>
         {React.cloneElement(icon, { size: 14 })}
       </div>
-
       <div className="flex flex-col leading-tight">
-        <span className="text-[9px] uppercase tracking-wider text-slate-400">
-          {label}
-        </span>
-        <span className="text-lg font-semibold text-white">
-          {value}
-        </span>
+        <span className="text-[9px] uppercase tracking-wider text-slate-400">{label}</span>
+        <span className="text-lg font-semibold text-white">{value}</span>
       </div>
     </div>
   );
 };
 
-// --- HELPER FUNCTIONS ---
 const compressImage = async (file) => {
     return new Promise((resolve) => {
       const img = new Image();
@@ -319,6 +298,40 @@ const generateThumbnail = async (file) => {
   }
 };
 
+const checkApiKeyValidity = async (key, model) => {
+    if (!key) return false;
+    if (model === 'groq') {
+        if (key.trim().startsWith('gsk_') && key.length > 20) return true;
+        try {
+            const response = await fetch("https://api.groq.com/openai/v1/models", {
+                method: "GET",
+                headers: { "Authorization": `Bearer ${key}` }
+            });
+            return response.ok;
+        } catch (e) {
+            return key.trim().startsWith('gsk_');
+        }
+    } else if (model === 'chatgpt') {
+        if (key.trim().startsWith('sk-') && key.length > 20) return true;
+         try {
+            const response = await fetch("https://api.openai.com/v1/models", {
+                method: "GET",
+                headers: { "Authorization": `Bearer ${key}` }
+            });
+            return response.ok;
+        } catch (e) {
+            return key.trim().startsWith('sk-');
+        }
+    } else {
+        try {
+            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}&pageSize=1`);
+            return response.ok;
+        } catch (e) {
+            return false;
+        }
+    }
+  };
+
 const App = () => {
   // 1. State Declarations
   const [theme, setTheme] = useState(() => localStorage.getItem('hackymetagen_theme') || 'dark');
@@ -355,7 +368,6 @@ const App = () => {
     return saved !== null ? JSON.parse(saved) : true;
   });
 
-  // Default Keywords State - No longer persisted in localStorage
   const [defaultKeywords, setDefaultKeywords] = useState('');
   
   const [isKeywordsLocked, setIsKeywordsLocked] = useState(() => {
@@ -363,10 +375,8 @@ const App = () => {
     return saved !== null ? JSON.parse(saved) : false;
   });
 
-  // --- AI MODEL STATE ---
   const [aiModel, setAiModel] = useState(() => localStorage.getItem('hackymetagen_ai_model') || 'gemini');
 
-  // API Key Handling
   const [userApiKey, setUserApiKey] = useState(''); 
   const [isKeySaved, setIsKeySaved] = useState(false); 
   const [isKeyInvalid, setIsKeyInvalid] = useState(false); 
@@ -374,16 +384,13 @@ const App = () => {
   const [showErrorMessage, setShowErrorMessage] = useState(false); 
   const [showTutorial, setShowTutorial] = useState(false); 
   const [showUnsupportedError, setShowUnsupportedError] = useState(false); 
-  // NEW: Legal Modal State
   const [activeLegalModal, setActiveLegalModal] = useState(null); 
   const [isVerifying, setIsVerifying] = useState(false); 
 
-  // UI State
   const [isGlobalDragging, setIsGlobalDragging] = useState(false);
   const [featureIndex, setFeatureIndex] = useState(0);
   const [fadeClass, setFadeClass] = useState('opacity-100 translate-y-0');
 
-  // Refs
   const fileInputRef = useRef(null);
   const dragCounter = useRef(0);
   const sessionId = useRef(0);
@@ -396,14 +403,12 @@ const App = () => {
   const defaultKeywordsRef = useRef(defaultKeywords);
   const aiModelRef = useRef(aiModel);
 
-  // --- DERIVED STATE (Defined EARLY to avoid ReferenceErrors) ---
+  // Derived State
   const activeFile = files.find(f => f.id === selectedFileId);
   const completeFiles = files.filter(f => f.status === 'complete');
   const allFilesComplete = files.length > 0 && files.every(f => f.status === 'complete');
   const totalFiles = files.length;
-  const progressPercent = totalFiles > 0 ? (completeFiles.length / totalFiles) * 100 : 0;
-
-  // Defined as mixed content array using useMemo
+  
   const features = useMemo(() => [
     {type: 'jsx', content: (<span className="flex items-center gap-2 whitespace-nowrap truncate max-w-full">Custom Keywords (Appended) Supports<span className="text-[10px] px-1.5 py-0.5 rounded bg-white text-black font-bold uppercase">New</span></span>)},
     {type: 'jsx', content: (<span className="flex items-center gap-2 whitespace-nowrap truncate max-w-full">Smart Batch Processing (Quota Saver)<span className="text-[10px] px-1.5 py-0.5 rounded bg-white text-black font-bold uppercase">New</span></span>)},
@@ -414,8 +419,7 @@ const App = () => {
     { type: 'text', content: " Video Metadata Support" }
   ], []);
 
-
-  // 2. Effects
+  // Effects
   useEffect(() => { localStorage.setItem('hackymetagen_theme', theme); }, [theme]);
   useEffect(() => {localStorage.setItem('hackymetagen_notify',JSON.stringify(notificationsEnabled));}, [notificationsEnabled]);
   useEffect(() => { localStorage.setItem('hackymetagen_auto_generate', JSON.stringify(isAutoGenerate)); }, [isAutoGenerate]);
@@ -476,40 +480,7 @@ const App = () => {
     }
   }, [allFilesComplete, notificationsEnabled]);
 
-  // 3. Logic Functions
-  const checkApiKeyValidity = async (key, model) => {
-    if (!key) return false;
-    if (model === 'groq') {
-        if (key.trim().startsWith('gsk_') && key.length > 20) return true;
-        try {
-            const response = await fetch("https://api.groq.com/openai/v1/models", {
-                method: "GET",
-                headers: { "Authorization": `Bearer ${key}` }
-            });
-            return response.ok;
-        } catch (e) {
-            return key.trim().startsWith('gsk_');
-        }
-    } else if (model === 'chatgpt') {
-        if (key.trim().startsWith('sk-') && key.length > 20) return true;
-         try {
-            const response = await fetch("https://api.openai.com/v1/models", {
-                method: "GET",
-                headers: { "Authorization": `Bearer ${key}` }
-            });
-            return response.ok;
-        } catch (e) {
-            return key.trim().startsWith('sk-');
-        }
-    } else {
-        try {
-            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}&pageSize=1`);
-            return response.ok;
-        } catch (e) {
-            return false;
-        }
-    }
-  };
+  // --- INTERNAL HELPER FUNCTIONS AND HANDLERS (DEFINED IN ORDER OF DEPENDENCY) ---
 
   const handleApplyKey = async () => {
     const keyToTest = userApiKey.trim();
@@ -536,6 +507,82 @@ const App = () => {
         setUserApiKey(''); 
         setShowErrorMessage(true);
         setTimeout(() => setShowErrorMessage(false), 5000);
+    }
+  };
+
+  const handleToggleTheme = () => {
+    setTheme(prev => prev === 'light' ? 'dark' : 'light');
+  };
+
+  const toggleCategoryMode = () => {
+    const newMode = !useAiCategory;
+    setUseAiCategory(newMode);
+    setFiles(prev => prev.map(f => {
+      let newCategoryId = 8;
+      if (newMode) {
+        newCategoryId = f.aiCategoryId || 8; 
+      }
+      return { ...f, categoryId: newCategoryId };
+    }));
+  };
+
+  const updateFileKeywords = (fileId, newKeywordsString) => {
+    const kwArray = newKeywordsString.split(',').map(k => k.trim()).filter(k => k);
+    const stats = {
+      short: kwArray.filter(k => k.split(' ').length <= 2).length,
+      mid: kwArray.filter(k => k.split(' ').length === 3).length,
+      long: kwArray.filter(k => k.split(' ').length >= 4).length,
+      total: kwArray.length
+    };
+    
+    setFiles(prev => prev.map(f => f.id === fileId ? {
+        ...f,
+        metadata: { ...f.metadata, keywords: newKeywordsString },
+        keywordAnalysis: stats
+    } : f));
+  };
+  
+  const updateFileCategory = (fileId, newCategoryId) => {
+    setFiles(prev => prev.map(f => f.id === fileId ? {
+        ...f,
+        categoryId: parseInt(newCategoryId, 10)
+    } : f));
+  };
+
+  const handleGlobalExtensionChange = (newExt) => {
+    setCsvExtension(newExt);
+    setPreserveExtension(false);
+    const isVideoExt = ['mov', 'mp4', 'mpg'].includes(newExt);
+
+    setFiles(prev => prev.map(f => {
+      const isVideoFile = f.type === 'video';
+      if (isVideoFile === isVideoExt) {
+         const originalName = f.file.name;
+         const newName = originalName.replace(/\.[^/.]+$/, "") + "." + newExt;
+         return { ...f, name: newName };
+      }
+      return f;
+    }));
+  };
+
+  const handlePreserveExtension = () => {
+    const nextState = !preserveExtension;
+    setPreserveExtension(nextState);
+    if (nextState) {
+        setFiles(prev => prev.map(f => {
+            return { ...f, name: f.file.name };
+        }));
+    } else {
+        setFiles(prev => prev.map(f => {
+            const isVideoFile = f.type === 'video';
+            const isVideoExt = ['mov', 'mp4', 'mpg'].includes(csvExtension);
+            if (isVideoFile === isVideoExt) {
+               const originalName = f.file.name;
+               const newName = originalName.replace(/\.[^/.]+$/, "") + "." + csvExtension;
+               return { ...f, name: newName };
+            }
+            return f;
+        }));
     }
   };
 
@@ -671,9 +718,7 @@ const App = () => {
                 }
                 throw new Error(errorMsg);
             }
-
             parsedResult = await response.json();
-
         } else {
             const categoriesString = ADOBE_CATEGORIES.map(c => `${c.id}. ${c.name}`).join('\n');
             const systemPromptText = `
@@ -691,7 +736,6 @@ const App = () => {
               3. **Category**: Choose the single most appropriate category ID (1-21) from the list below:
               ${categoriesString}
               4. **Approval Prediction**: Status ("Accepted" or "Rejected") and Reason.
-
               OUTPUT FORMAT (JSON ARRAY ONLY):
               Return a JSON Array containing exactly ${validAssets.length} objects.
               [
@@ -711,77 +755,46 @@ const App = () => {
                 const modelName = aiModel === 'chatgpt' ? OPENAI_MODEL : GROQ_MODEL;
 
                 const messages = [
-                    {
-                        role: "user",
-                        content: [
-                            { type: "text", text: systemPromptText }
-                        ]
-                    }
+                    { role: "user", content: [{ type: "text", text: systemPromptText }] }
                 ];
-
                 validAssets.forEach((asset, index) => {
                     messages[0].content.push({ type: "text", text: `\n\n--- INPUT ASSET ${index + 1} ---` });
-                    
                     if (asset.isVideo && Array.isArray(asset.data)) {
                         asset.data.forEach(frameData => {
-                             messages[0].content.push({
-                                type: "image_url",
-                                image_url: { url: `data:image/jpeg;base64,${frameData}` }
-                             });
+                             messages[0].content.push({ type: "image_url", image_url: { url: `data:image/jpeg;base64,${frameData}` } });
                         });
                     } else {
-                         messages[0].content.push({
-                            type: "image_url",
-                            image_url: { url: `data:${asset.mimeType};base64,${asset.data}` }
-                         });
+                         messages[0].content.push({ type: "image_url", image_url: { url: `data:${asset.mimeType};base64,${asset.data}` } });
                     }
                 });
 
                 const response = await fetch(endpoint, {
                     method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${activeKey}`,
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        model: modelName,
-                        messages: messages,
-                        temperature: 0.7,
-                        max_tokens: 4096,
-                        response_format: { type: "json_object" }
-                    }),
+                    headers: { 'Authorization': `Bearer ${activeKey}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ model: modelName, messages: messages, temperature: 0.7, max_tokens: 4096, response_format: { type: "json_object" } }),
                     signal: controller.signal
                 });
 
                 if (!response.ok) {
                     let errorMsg = `${aiModel === 'chatgpt' ? 'OpenAI' : 'Groq'} API Error: ${response.status}`;
-                    try {
-                        const err = await response.json();
-                        errorMsg += ` - ${JSON.stringify(err)}`;
-                    } catch(e){}
+                    try { const err = await response.json(); errorMsg += ` - ${JSON.stringify(err)}`; } catch(e){}
                     throw new Error(errorMsg);
                 }
-
                 const data = await response.json();
                 let resultText = data.choices[0].message.content;
                 resultText = resultText.replace(/```json/g, '').replace(/```/g, '').trim();
-                
                 let rawParse = JSON.parse(resultText);
-                
                 if (Array.isArray(rawParse)) {
                     parsedResult = rawParse;
                 } else if (typeof rawParse === 'object') {
                     const arrayVal = Object.values(rawParse).find(v => Array.isArray(v));
                     if (arrayVal) parsedResult = arrayVal;
-                    else parsedResult = [rawParse]; 
+                    else parsedResult = [rawParse];
                 } else {
                     throw new Error(`Unexpected JSON format from ${aiModel}`);
                 }
-
             } else {
-                // --- GOOGLE GEMINI API CALL ---
                 const contentParts = [{ text: systemPromptText }];
-                
                 validAssets.forEach((asset, index) => {
                     contentParts.push({ text: `\n\n--- INPUT ASSET ${index + 1} ---` });
                     if (asset.isVideo && Array.isArray(asset.data)) {
@@ -792,41 +805,27 @@ const App = () => {
                         contentParts.push({ inlineData: { mimeType: asset.mimeType, data: asset.data } });
                     }
                 });
-
                 const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${activeKey}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        contents: [{ role: "user", parts: contentParts }],
-                        generationConfig: { responseMimeType: "application/json" }
-                    }),
+                    body: JSON.stringify({ contents: [{ role: "user", parts: contentParts }], generationConfig: { responseMimeType: "application/json" } }),
                     signal: controller.signal
                 });
-
                 if (!response.ok) {
                     let errorMsg = `API Error: ${response.status} ${response.statusText}`;
-                    try {
-                        const errorData = await response.json();
-                        if (errorData.error) errorMsg = `API Error: ${JSON.stringify(errorData.error)}`;
-                    } catch (e) {}
+                    try { const errorData = await response.json(); if (errorData.error) errorMsg = `API Error: ${JSON.stringify(errorData.error)}`; } catch (e) {}
                     throw new Error(errorMsg);
                 }
-
                 const data = await response.json();
-                if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
-                if (!data.candidates || !data.candidates[0]) throw new Error("No candidates returned from AI");
-                
                 let resultText = data.candidates[0].content.parts[0].text;
                 resultText = resultText.replace(/```json/g, '').replace(/```/g, '').trim();
                 parsedResult = JSON.parse(resultText);
             }
         }
-
         if (!Array.isArray(parsedResult)) {
             if (typeof parsedResult === 'object') parsedResult = [parsedResult];
             else throw new Error("AI did not return a JSON Array");
         }
-
         const finalResults = {};
         validAssets.forEach((asset, idx) => {
             if (parsedResult[idx]) {
@@ -838,14 +837,32 @@ const App = () => {
                 finalResults[asset.id] = parsedResult[idx];
             }
         });
-        
         return finalResults;
-
     } catch (e) {
         throw e;
     } finally {
         clearTimeout(timeoutId);
     }
+  };
+
+  const handleUpdateCompletedFiles = () => {
+    const currentDefaults = defaultKeywordsRef.current;
+    if (!currentDefaults) return;
+    setFiles(prev => prev.map(f => {
+        if (f.status === 'complete') {
+            const sourceKeywords = f.originalAiKeywords || f.metadata.keywords;
+            const finalKeywords = mergeKeywords(sourceKeywords, currentDefaults);
+            const kwArray = finalKeywords.split(',').map(k => k.trim());
+            const analysis = {
+                short: kwArray.filter(k => k.split(' ').length <= 2).length,
+                mid: kwArray.filter(k => k.split(' ').length === 3).length,
+                long: kwArray.filter(k => k.split(' ').length >= 4).length,
+                total: kwArray.length
+            };
+            return { ...f, metadata: { ...f.metadata, keywords: finalKeywords }, keywordAnalysis: analysis };
+        }
+        return f;
+    }));
   };
 
   const runBatchGeneration = async (filesToProcess) => {
@@ -854,20 +871,15 @@ const App = () => {
          for (let i = 0; i < filesToProcess.length; i += BATCH_SIZE) {
              chunks.push(filesToProcess.slice(i, i + BATCH_SIZE));
          }
-
          for (const chunk of chunks) {
             const currentFiles = filesRef.current;
             const validChunk = chunk.filter(f => currentFiles.find(cf => cf.id === f.id));
             if (validChunk.length === 0) continue;
-
             let retries = 1; 
             let success = false;
-            let lastError = null;
-
             while (retries > 0 && !success) {
                 try {
                     const batchResults = await generateBatchMetadata(validChunk);
-                    
                     setFiles(prev => prev.map(f => {
                         const result = batchResults[f.id];
                         if (result) {
@@ -879,7 +891,6 @@ const App = () => {
                                 long: kwArray.filter(k => k.split(' ').length >= 4).length,
                                 total: kwArray.length
                             };
-                            
                             const predictedCategory = result.category_id || 8;
                             const finalCategory = useAiCategory ? predictedCategory : 8;
                             const currentCsvExt = csvExtensionRef.current;
@@ -894,11 +905,10 @@ const App = () => {
                                     finalName = f.file.name.replace(/\.[^/.]+$/, "") + "." + currentCsvExt;
                                 }
                             }
-
                             return { 
                                 ...f, 
                                 status: 'complete', 
-                                originalAiKeywords: result.keywords, // Store Raw AI Output
+                                originalAiKeywords: result.keywords, 
                                 metadata: { ...result, keywords: finalKeywords },
                                 keywordAnalysis: analysis,
                                 aiCategoryId: predictedCategory, 
@@ -909,35 +919,24 @@ const App = () => {
                         return f;
                     }));
                     success = true;
-                    await new Promise(resolve => setTimeout(resolve, 1000)); 
+                    await new Promise(resolve => setTimeout(resolve, 1000));
                 } catch (error) {
                     console.error(`Error processing batch:`, error);
-                    lastError = error;
                     const errorStr = error.toString();
                     if (errorStr.includes("API Key") || errorStr.includes("403") || errorStr.includes("400") || errorStr.includes("Invalid") || errorStr.includes("Quota")) {
                          setIsKeyInvalid(true);
                          setIsKeySaved(false);
                          setUserApiKey('');
-                         retries = 0; // Stop retrying on auth errors
+                         retries = 0;
                     } else {
                         retries--;
                     }
                 }
             }
-
             if (!success) {
-                let displayError = "Failed to generate metadata.";
-                if (lastError) {
-                    const msg = typeof lastError === 'string' ? lastError : (lastError.message || JSON.stringify(lastError));
-                    if (msg.includes("API Key") || msg.includes("403") || msg.includes("400") || msg.includes("Invalid") || msg.includes("abort") || msg.includes("Quota") || msg.includes("429") || msg.includes("API Error")) {
-                        displayError = "Check or replace to a new api key. (" + msg + ")";
-                    } else {
-                        displayError = msg;
-                    }
-                }
                 setFiles(prev => prev.map(f => {
                     if (validChunk.find(vf => vf.id === f.id)) {
-                        return { ...f, status: 'error', errorMessage: displayError };
+                        return { ...f, status: 'error', errorMessage: "Generation failed. Check API Key or try again." };
                     }
                     return f;
                 }));
@@ -1457,7 +1456,7 @@ const App = () => {
             ? 'Check Key'
             : isKeySaved
             ? 'Ready'
-            : aiModel === 'groq' ? 'Enter Groq Key' : aiModel === 'chatgpt' ? 'Enter OpenAI Key' : 'Enter Gemini Key'
+            : aiModel === 'groq' ? 'Enter Groq API Key' : aiModel === 'chatgpt' ? 'Enter OpenAI Key' : 'Enter Gemini API Key'
         }
         value={userApiKey}
         onChange={(e) => {
