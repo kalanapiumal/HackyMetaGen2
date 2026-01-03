@@ -76,11 +76,10 @@ const apiKey = "";
 
 // --- API CONSTANTS ---
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
-// Using Llama 4 Scout as requested
 const GROQ_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct";
 
 const OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
-const OPENAI_MODEL = "gpt-4o";
+const OPENAI_MODEL = "gpt-4o-mini";
 
 const ADOBE_CATEGORIES = [
   { id: 1, name: "Animals" },
@@ -134,7 +133,7 @@ const LEGAL_CONTENT = {
             <li>We <strong>do not</strong> permanently store, save, or claim ownership of your uploaded assets.</li>
         </ul>
         <p><strong>2. API Keys & Local Storage:</strong> If you provide your own API Keys, they are stored locally in your browser's <code>localStorage</code> on your device. It is not saved to our databases. You retain full control over your key and can delete it at any time by clearing the input field.</p>
-        <p><strong>3. Third-Party Data Sharing:</strong> This tool utilizes third-party AI APIs to generate metadata. By using this tool, you acknowledge that your input data (image frames and prompts) is sent to these providers for processing. Please refer to their respective Privacy Policies.</p>
+        <p><strong>3. Third-Party Data Sharing:</strong> This tool utilizes third-party AI APIs (Google Gemini or Groq) to generate metadata. By using this tool, you acknowledge that your input data (image frames and prompts) is sent to these providers for processing. Please refer to their respective Privacy Policies.</p>
         <p><strong>4. Usage Analytics:</strong> We may collect anonymous, non-identifiable usage statistics (e.g., number of generations) to improve service stability, but this does not include the content of your uploads.</p>
       </div>
     )
@@ -887,6 +886,8 @@ const App = () => {
             if (validChunk.length === 0) continue;
             let retries = 1; 
             let success = false;
+            let lastError = null;
+
             while (retries > 0 && !success) {
                 try {
                     const batchResults = await generateBatchMetadata(validChunk);
@@ -932,6 +933,7 @@ const App = () => {
                     await new Promise(resolve => setTimeout(resolve, 1000));
                 } catch (error) {
                     console.error(`Error processing batch:`, error);
+                    lastError = error;
                     const errorStr = error.toString();
                     if (errorStr.includes("API Key") || errorStr.includes("403") || errorStr.includes("400") || errorStr.includes("Invalid") || errorStr.includes("Quota")) {
                          setIsKeyInvalid(true);
@@ -944,9 +946,20 @@ const App = () => {
                 }
             }
             if (!success) {
+                let displayError = "Failed to generate metadata.";
+                if (lastError) {
+                   const errStr = lastError.toString();
+                   if (errStr.includes("insufficient_quota")) {
+                      displayError = "OpenAI Quota Exceeded. Check billing.";
+                   } else if (errStr.includes("API Key")) {
+                      displayError = "Invalid API Key.";
+                   } else {
+                       displayError = errStr.length > 50 ? errStr.substring(0, 50) + "..." : errStr;
+                   }
+                }
                 setFiles(prev => prev.map(f => {
                     if (validChunk.find(vf => vf.id === f.id)) {
-                        return { ...f, status: 'error', errorMessage: "Generation failed. Check API Key or try again." };
+                        return { ...f, status: 'error', errorMessage: displayError };
                     }
                     return f;
                 }));
