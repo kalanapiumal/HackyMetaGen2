@@ -62,8 +62,8 @@ const getEnvBool = (key, defaultVal) => {
 // 1. MANUAL_CONFIG: Set these to true/false to override environment variables.
 //    USE_BACKEND: Set to true ONLY if you have deployed a backend at /api/generate.
 //    Default: false (Client-side for Canvas testing)
-const MANUAL_USE_BACKEND = false; 
-const MANUAL_REQUIRE_USER_API_KEY = false;
+const MANUAL_USE_BACKEND = true; 
+const MANUAL_REQUIRE_USER_API_KEY = true;
 
 // 2. LOGIC: Checks Environment Variable first, then Manual toggle.
 const USE_BACKEND = getEnvBool('NEXT_PUBLIC_USE_BACKEND', false) || MANUAL_USE_BACKEND;
@@ -675,7 +675,8 @@ const App = () => {
     else if (aiModel === 'chatgpt') keyKey = 'hackymetagen_openai_api_key';
     else keyKey = 'hackymetagen_api_key';
     
-    let activeKey = apiKeyRef.current || localStorage.getItem(keyKey) || apiKey;
+    // Check both ref and input field to ensure we get the latest key even if not saved via "Check" button
+    let activeKey = apiKeyRef.current || localStorage.getItem(keyKey) || userApiKey || apiKey;
 
     if (REQUIRE_USER_API_KEY && !activeKey) {
         throw new Error(`Missing ${aiModel === 'groq' ? 'Groq' : aiModel === 'chatgpt' ? 'ChatGPT' : 'Gemini'} API Key. Please click the Info icon.`);
@@ -1056,7 +1057,8 @@ const App = () => {
     else if (aiModel === 'chatgpt') keyKey = 'hackymetagen_openai_api_key';
     else keyKey = 'hackymetagen_api_key';
     
-    const activeKey = apiKeyRef.current || localStorage.getItem(keyKey) || apiKey;
+    // Check key
+    let activeKey = apiKeyRef.current || localStorage.getItem(keyKey) || userApiKey || apiKey;
 
     if (REQUIRE_USER_API_KEY && !activeKey) {
       setShowTutorial(true);
