@@ -61,11 +61,11 @@ const getEnvBool = (key, defaultVal) => {
 // --- CONFIGURATION ---
 // 1. USE_BACKEND: If true, sends requests to /api/generate (hides logic). 
 //    Default: false (Client-side for Canvas testing)
-const USE_BACKEND = getEnvBool('NEXT_PUBLIC_USE_BACKEND', false);
+const USE_BACKEND = getEnvBool('NEXT_PUBLIC_USE_BACKEND', true);
 
 // 2. REQUIRE_USER_API_KEY: If true, forces user to enter a key in the UI. 
 //    Default: false (Canvas testing uses system key if available/empty)
-const REQUIRE_USER_API_KEY = getEnvBool('NEXT_PUBLIC_REQUIRE_USER_API_KEY', false);
+const REQUIRE_USER_API_KEY = getEnvBool('NEXT_PUBLIC_REQUIRE_USER_API_KEY', true);
 
 // --- Constants ---
 const MAX_TITLE_LENGTH = 120;
