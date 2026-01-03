@@ -62,8 +62,8 @@ const getEnvBool = (key, defaultVal) => {
 // 1. MANUAL_CONFIG: Set these to true/false to override environment variables.
 //    USE_BACKEND: Set to true ONLY if you have deployed a backend at /api/generate.
 //    Default: false (Client-side for Canvas testing)
-const MANUAL_USE_BACKEND = true; 
-const MANUAL_REQUIRE_USER_API_KEY = true;
+const MANUAL_USE_BACKEND = false; 
+const MANUAL_REQUIRE_USER_API_KEY = false;
 
 // 2. LOGIC: Checks Environment Variable first, then Manual toggle.
 const USE_BACKEND = getEnvBool('NEXT_PUBLIC_USE_BACKEND', false) || MANUAL_USE_BACKEND;
