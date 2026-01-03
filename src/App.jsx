@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { 
   Upload, 
   FileImage, 
@@ -33,23 +33,55 @@ import {
   Bell,
   BellOff,
   Shield,
-  Tags
+  Tags,
+  Lock,
+  ArrowRightLeft,
+  Cpu,
+  Bot
 } from 'lucide-react';
 
 /**
- * Hacky MetaGen 3.7 - Adobe Stock Metadata Generator
- * Built with React + Tailwind CSS + Gemini API
+ * Hacky MetaGen 3.9 - Adobe Stock Metadata Generator
+ * Built with React + Tailwind CSS + Gemini API + Groq API + ChatGPT API
  * Optimized for Client-Side Preview
  */
 
+// --- CONFIGURATION HELPER ---
+const getEnvBool = (key, defaultVal) => {
+  try {
+    if (typeof process !== 'undefined' && process.env) {
+      return process.env[key] === 'true';
+    }
+  } catch (e) {
+    return defaultVal;
+  }
+  return defaultVal;
+};
+
+// --- CONFIGURATION ---
+// 1. USE_BACKEND: If true, sends requests to /api/generate (hides logic). 
+//    Default: false (Client-side for Canvas testing)
+const USE_BACKEND = getEnvBool('NEXT_PUBLIC_USE_BACKEND', false);
+
+// 2. REQUIRE_USER_API_KEY: If true, forces user to enter a key in the UI. 
+//    Default: false (Canvas testing uses system key if available/empty)
+const REQUIRE_USER_API_KEY = getEnvBool('NEXT_PUBLIC_REQUIRE_USER_API_KEY', false);
+
 // --- Constants ---
-const MAX_TITLE_LENGTH = 125;
+const MAX_TITLE_LENGTH = 120;
 const MIN_TITLE_LENGTH = 100; 
 const TARGET_KEYWORD_COUNT = 49;
 const BATCH_SIZE = 3; // Process 3 images per API call to save quota
 // The execution environment provides the key at runtime for simple scripts, 
 // but for this full UI app, we allow user input or fallback.
 const apiKey = ""; 
+
+// --- API CONSTANTS ---
+const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
+const GROQ_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct";
+
+const OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
+const OPENAI_MODEL = "gpt-4o";
 
 const ADOBE_CATEGORIES = [
   { id: 1, name: "Animals" },
@@ -96,15 +128,14 @@ const LEGAL_CONTENT = {
     icon: <Shield size={24} className="text-green-500" />,
     content: (
       <div className="space-y-4 text-left">
-        <p className="text-sm opacity-75">Last Updated: October 26, 2025</p>
         <p><strong>1. Data Processing Model:</strong> Hacky MetaGen operates primarily as a client-side interface. When you upload files for processing:</p>
         <ul className="list-disc pl-5 space-y-1 opacity-90">
             <li>Images/Videos are processed in your browser's memory to extract frames or thumbnails.</li>
-            <li>Data is transmitted directly from your browser to the Google Gemini API.</li>
+            <li>Data is transmitted directly from your browser to the Google Gemini API, Groq API, or OpenAI API (depending on selection).</li>
             <li>We <strong>do not</strong> permanently store, save, or claim ownership of your uploaded assets.</li>
         </ul>
-        <p><strong>2. API Keys & Local Storage:</strong> If you provide your own Google Gemini API Key, it is stored locally in your browser's <code>localStorage</code> on your device. It is not saved to our databases. You retain full control over your key and can delete it at any time by clearing the input field.</p>
-        <p><strong>3. Third-Party Data Sharing:</strong> This tool utilizes the Google Gemini API to generate metadata. By using this tool, you acknowledge that your input data (image frames and prompts) is sent to Google for processing. Please refer to <a href="https://policies.google.com/privacy" target="_blank" className="underline text-indigo-500">Google's Privacy Policy</a> regarding how they handle API data.</p>
+        <p><strong>2. API Keys & Local Storage:</strong> If you provide your own API Keys, they are stored locally in your browser's <code>localStorage</code> on your device. It is not saved to our databases. You retain full control over your key and can delete it at any time by clearing the input field.</p>
+        <p><strong>3. Third-Party Data Sharing:</strong> This tool utilizes third-party AI APIs to generate metadata. By using this tool, you acknowledge that your input data (image frames and prompts) is sent to these providers for processing. Please refer to their respective Privacy Policies.</p>
         <p><strong>4. Usage Analytics:</strong> We may collect anonymous, non-identifiable usage statistics (e.g., number of generations) to improve service stability, but this does not include the content of your uploads.</p>
       </div>
     )
@@ -122,335 +153,82 @@ const LEGAL_CONTENT = {
             <li>Use the service to spam or overload the API.</li>
         </ul>
         <p><strong>3. Intellectual Property:</strong> You retain all rights to the images and videos you process. We claim no intellectual property rights over the content you upload or the metadata generated.</p>
-        <p><strong>4. API Usage:</strong> You agree to comply with Google's Generative AI Acceptable Use Policy when using the integrated AI features.</p>
+        <p><strong>4. API Usage:</strong> You agree to comply with the Acceptable Use Policies of the respective AI providers when using the integrated AI features.</p>
         <p><strong>5. Modifications:</strong> We reserve the right to revise these terms of service at any time without notice. By using this website you are agreeing to be bound by the then current version of these terms of service.</p>
       </div>
     )
   }
 };
 
-const App = () => {
-  // 1. State Declarations
-  const [theme, setTheme] = useState(() => localStorage.getItem('hackymetagen_theme') || 'dark');
-  const [files, setFiles] = useState([]);
-  
-  const [notificationsEnabled, setNotificationsEnabled] = useState(() => {
-    const saved = localStorage.getItem('hackymetagen_notify');
-    return saved !== null ? JSON.parse(saved) : true;
-  });
+// --- HELPER COMPONENTS ---
+const StatCard = ({ icon, label, value, accent }) => {
+  const accents = {
+    blue: 'text-blue-400 bg-blue-500/10',
+    green: 'text-green-400 bg-green-500/10',
+    yellow: 'text-yellow-400 bg-yellow-500/10',
+    orange: 'text-orange-400 bg-orange-500/10',
+    red: 'text-red-400 bg-red-500/10',
+  };
 
-  const hasNotifiedRef = useRef(false);
-  const [selectedFileId, setSelectedFileId] = useState(null);
-  const [contentType, setContentType] = useState('image'); 
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [viewMode, setViewMode] = useState('batch'); 
-  const [copiedId, setCopiedId] = useState(null); 
-  
-  const [newKeyword, setNewKeyword] = useState('');
-  const [draggedIndex, setDraggedIndex] = useState(null);
+  return (
+    <div
+      className="
+        flex items-center gap-3
+        px-3 py-2
+        rounded-lg border
+        bg-slate-800/60 border-slate-700
+        flex-1 min-w-0
+      "
+    >
+      <div
+        className={`w-8 h-8 rounded-md flex items-center justify-center ${accents[accent]}`}
+      >
+        {React.cloneElement(icon, { size: 14 })}
+      </div>
 
-  const [isAutoGenerate, setIsAutoGenerate] = useState(() => {
-    const saved = localStorage.getItem('hackymetagen_auto_generate');
-    return saved !== null ? JSON.parse(saved) : false;
-  });
-  
-  const [useAiCategory, setUseAiCategory] = useState(() => {
-    const saved = localStorage.getItem('hackymetagen_use_ai_category');
-    return saved !== null ? JSON.parse(saved) : false;
-  });
-
-  const [csvExtension, setCsvExtension] = useState(() => localStorage.getItem('hackymetagen_csv_extension') || 'ai');
-  const [preserveExtension, setPreserveExtension] = useState(() => {
-    const saved = localStorage.getItem('hackymetagen_preserve_extension');
-    return saved !== null ? JSON.parse(saved) : false;
-  });
-
-  // Default Keywords State
-  const [defaultKeywords, setDefaultKeywords] = useState(() => localStorage.getItem('hackymetagen_default_keywords') || '');
-
-  // API Key Handling
-  const [userApiKey, setUserApiKey] = useState(''); 
-  const [isKeySaved, setIsKeySaved] = useState(false); 
-  const [isKeyInvalid, setIsKeyInvalid] = useState(false); 
-  const [showSuccessMessage, setShowSuccessMessage] = useState(false); 
-  const [showErrorMessage, setShowErrorMessage] = useState(false); 
-  const [showTutorial, setShowTutorial] = useState(false); 
-  const [showUnsupportedError, setShowUnsupportedError] = useState(false); 
-  // NEW: Legal Modal State
-  const [activeLegalModal, setActiveLegalModal] = useState(null); 
-  const [isVerifying, setIsVerifying] = useState(false); 
-
-  // UI State
-  const [isGlobalDragging, setIsGlobalDragging] = useState(false);
-  const [featureIndex, setFeatureIndex] = useState(0);
-  const [fadeClass, setFadeClass] = useState('opacity-100 translate-y-0');
-
-  // Refs
-  const fileInputRef = useRef(null);
-  const dragCounter = useRef(0);
-  const sessionId = useRef(0);
-  const processingMutex = useRef(Promise.resolve());
-  
-  const csvExtensionRef = useRef(csvExtension);
-  const preserveExtensionRef = useRef(preserveExtension);
-  const filesRef = useRef(files); 
-  const apiKeyRef = useRef(userApiKey); 
-  const defaultKeywordsRef = useRef(defaultKeywords);
-
-// Defined as mixed content array
-const features = [
-{type: 'jsx',
-    content: (
-      <span className="flex items-center gap-2 whitespace-nowrap truncate max-w-full">
-        Default Keywords Manager
-        <span className="text-[10px] px-1.5 py-0.5 rounded bg-white text-black font-bold uppercase">
-          New
+      <div className="flex flex-col leading-tight">
+        <span className="text-[9px] uppercase tracking-wider text-slate-400">
+          {label}
         </span>
-      </span>
-    )
-  },
-{type: 'jsx',
-    content: (
-      <span className="flex items-center gap-2 whitespace-nowrap truncate max-w-full">
-        Smart Batch Processing (Quota Saver)
-        <span className="text-[10px] px-1.5 py-0.5 rounded bg-white text-black font-bold uppercase">
-          New
+        <span className="text-lg font-semibold text-white">
+          {value}
         </span>
-      </span>
-    )
-  },
-  {type: 'jsx',
-    content: (
-      <span className="flex items-center gap-2 whitespace-nowrap truncate max-w-full">
-        Files Statistics Panel
-        <span className="text-[10px] px-1.5 py-0.5 rounded bg-white text-black font-bold uppercase">
-          New
-        </span>
-      </span>
-    )
-  },
+      </div>
+    </div>
+  );
+};
 
-  {
-    type: 'jsx',
-    content: (
-      <span className="flex items-center gap-2 whitespace-nowrap truncate max-w-full">
-        Notification Sound On Batch Completed
-      <span className="text-[10px] px-1.5 py-0.5 rounded bg-white text-black font-bold uppercase animate-pulse">
-        New
-      </span>
-      </span>
-    )
-  },
-  
-    {
-    type: 'jsx',
-    content: (
-      <span className="flex items-center gap-2 whitespace-nowrap truncate max-w-full">
-        AI Approval Result Prediction Beta 0.5
-      <span className="text-[10px] px-1.5 py-0.5 rounded bg-white text-black font-bold uppercase animate-pulse">
-        New
-      </span>
-      </span>
-    )
-  },
-  { type: 'text', content: " CSV FileName Extension Selection Support" },
-  { type: 'text', content: " Video Metadata Support" }
-];
+// --- HELPER FUNCTIONS ---
+const compressImage = async (file) => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.src = URL.createObjectURL(file);
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+        const maxDim = 1500;
+        if (width > maxDim || height > maxDim) {
+          const ratio = width / height;
+          if (width > height) { width = maxDim; height = maxDim / ratio; }
+          else { height = maxDim; width = maxDim * ratio; }
+        }
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+        URL.revokeObjectURL(img.src);
+        resolve(dataUrl.split(',')[1]); 
+      };
+      img.onerror = () => {
+         URL.revokeObjectURL(img.src);
+         resolve(null);
+      };
+    });
+};
 
-
-  // 2. Effects
-  useEffect(() => { localStorage.setItem('hackymetagen_theme', theme); }, [theme]);
-  useEffect(() => {localStorage.setItem('hackymetagen_notify',JSON.stringify(notificationsEnabled));}, [notificationsEnabled]);
-  useEffect(() => { localStorage.setItem('hackymetagen_auto_generate', JSON.stringify(isAutoGenerate)); }, [isAutoGenerate]);
-  useEffect(() => { localStorage.setItem('hackymetagen_use_ai_category', JSON.stringify(useAiCategory)); }, [useAiCategory]);
-  useEffect(() => { localStorage.setItem('hackymetagen_csv_extension', csvExtension); }, [csvExtension]);
-  useEffect(() => { localStorage.setItem('hackymetagen_preserve_extension', JSON.stringify(preserveExtension)); }, [preserveExtension]);
-  useEffect(() => { localStorage.setItem('hackymetagen_default_keywords', defaultKeywords); }, [defaultKeywords]);
-  
-  useEffect(() => { csvExtensionRef.current = csvExtension; }, [csvExtension]);
-  useEffect(() => { preserveExtensionRef.current = preserveExtension; }, [preserveExtension]);
-  useEffect(() => { filesRef.current = files; }, [files]);
-  useEffect(() => { apiKeyRef.current = userApiKey; }, [userApiKey]);
-  useEffect(() => { defaultKeywordsRef.current = defaultKeywords; }, [defaultKeywords]);
-
-  useEffect(() => {
-    const savedKey = localStorage.getItem('hackymetagen_api_key');
-    if (savedKey) {
-      setIsKeySaved(true);
-      setUserApiKey(savedKey); 
-      apiKeyRef.current = savedKey;
-    }
-  }, []);
-
-  useEffect(() => {
-    document.title = "Hacky MetaGen";
-  }, []);
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setFadeClass('opacity-0 -translate-y-2');
-      setTimeout(() => {
-        setFeatureIndex((prev) => (prev + 1) % features.length);
-        setFadeClass('opacity-100 translate-y-0');
-      }, 300);
-    }, 5000); 
-    return () => clearInterval(interval);
-  }, [features.length]);
-
-  // 3. Logic Functions
-  const checkApiKeyValidity = async (key) => {
-    if (!key) return false;
-    try {
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}&pageSize=1`);
-      return response.ok;
-    } catch (e) {
-      return false;
-    }
-  };
-
-  const handleApplyKey = async () => {
-    const keyToTest = userApiKey.trim();
-    if (!keyToTest) return;
-
-    setIsVerifying(true);
-    const isValid = await checkApiKeyValidity(keyToTest);
-    setIsVerifying(false);
-
-    if (isValid) {
-        localStorage.setItem('hackymetagen_api_key', keyToTest);
-        setIsKeySaved(true);
-        setIsKeyInvalid(false);
-        setShowSuccessMessage(true);
-        setTimeout(() => setShowSuccessMessage(false), 5000);
-    } else {
-        setIsKeyInvalid(true);
-        setIsKeySaved(false);
-        setUserApiKey(''); 
-        setShowErrorMessage(true);
-        setTimeout(() => setShowErrorMessage(false), 5000);
-    }
-  };
-
-  const handleToggleTheme = () => {
-    setTheme(prev => prev === 'light' ? 'dark' : 'light');
-  };
-
-  const toggleCategoryMode = () => {
-    const newMode = !useAiCategory;
-    setUseAiCategory(newMode);
-    setFiles(prev => prev.map(f => {
-      let newCategoryId = 8;
-      if (newMode) {
-        newCategoryId = f.aiCategoryId || 8; 
-      }
-      return { ...f, categoryId: newCategoryId };
-    }));
-  };
-
-  const generateThumbnail = async (file) => {
-    const isVideo = file.type.startsWith('video/') || /\.(mov|mp4|avi|webm|mkv|mpg|mpeg)$/i.test(file.name);
-    if (isVideo) {
-      return new Promise((resolve) => {
-        const video = document.createElement('video');
-        video.preload = 'metadata';
-        video.src = URL.createObjectURL(file);
-        video.muted = true;
-        video.playsInline = true;
-        video.currentTime = 1;
-        const videoTimeout = setTimeout(() => resolve(null), 5000);
-        video.onloadeddata = () => { if (video.duration < 1) video.currentTime = 0; };
-        video.onseeked = () => {
-          clearTimeout(videoTimeout);
-          try {
-            const canvas = document.createElement('canvas');
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            const ctx = canvas.getContext('2d');
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            const dataUrl = canvas.toDataURL('image/jpeg');
-            URL.revokeObjectURL(video.src);
-            resolve(dataUrl);
-          } catch(e) { resolve(null); }
-        };
-        video.onerror = () => {
-          clearTimeout(videoTimeout);
-          URL.revokeObjectURL(video.src);
-          resolve(null);
-        };
-      });
-    } else {
-      return URL.createObjectURL(file);
-    }
-  };
-
-  const updateFileKeywords = (fileId, newKeywordsString) => {
-    const kwArray = newKeywordsString.split(',').map(k => k.trim()).filter(k => k);
-    const stats = {
-      short: kwArray.filter(k => k.split(' ').length <= 2).length,
-      mid: kwArray.filter(k => k.split(' ').length === 3).length,
-      long: kwArray.filter(k => k.split(' ').length >= 4).length,
-      total: kwArray.length
-    };
-    
-    setFiles(prev => prev.map(f => f.id === fileId ? {
-        ...f,
-        metadata: { ...f.metadata, keywords: newKeywordsString },
-        keywordAnalysis: stats
-    } : f));
-  };
-  
-  const updateFileCategory = (fileId, newCategoryId) => {
-    setFiles(prev => prev.map(f => f.id === fileId ? {
-        ...f,
-        categoryId: parseInt(newCategoryId, 10)
-    } : f));
-  };
-
-  const handleGlobalExtensionChange = (newExt) => {
-    setCsvExtension(newExt);
-    setPreserveExtension(false);
-    const isVideoExt = ['mov', 'mp4', 'mpg'].includes(newExt);
-
-    setFiles(prev => prev.map(f => {
-      if (f.status !== 'complete') return f;
-      const isVideoFile = f.type === 'video';
-      if (isVideoFile === isVideoExt) {
-         const originalName = f.file.name;
-         const newName = originalName.replace(/\.[^/.]+$/, "") + "." + newExt;
-         return { ...f, name: newName };
-      }
-      return f;
-    }));
-  };
-
-  const handlePreserveExtension = () => {
-    const nextState = !preserveExtension;
-    setPreserveExtension(nextState);
-
-    if (nextState) {
-        setFiles(prev => prev.map(f => {
-            if (f.status === 'complete') {
-                return { ...f, name: f.file.name };
-            }
-            return f;
-        }));
-    } else {
-        setFiles(prev => prev.map(f => {
-            if (f.status === 'complete') {
-                const isVideoFile = f.type === 'video';
-                const isVideoExt = ['mov', 'mp4', 'mpg'].includes(csvExtension);
-                if (isVideoFile === isVideoExt) {
-                   const originalName = f.file.name;
-                   const newName = originalName.replace(/\.[^/.]+$/, "") + "." + csvExtension;
-                   return { ...f, name: newName };
-                }
-            }
-            return f;
-        }));
-    }
-  };
-
-  const extractVideoFrames = (file, frameCount = 5) => {
+const extractVideoFrames = (file, frameCount = 5) => {
     return new Promise((resolve, reject) => {
       const video = document.createElement('video');
       const canvas = document.createElement('canvas');
@@ -503,50 +281,295 @@ const features = [
         reject(new Error("Failed to load video for frame extraction"));
       };
     });
-  };
+};
 
-  // --- MERGE DEFAULT KEYWORDS LOGIC ---
-  const mergeKeywords = (aiKeywordsStr) => {
-    const currentDefaults = defaultKeywordsRef.current;
-    if (!currentDefaults || !currentDefaults.trim()) return aiKeywordsStr;
+const generateThumbnail = async (file) => {
+  const isVideo = file.type.startsWith('video/') || /\.(mov|mp4|avi|webm|mkv|mpg|mpeg)$/i.test(file.name);
+  if (isVideo) {
+    return new Promise((resolve) => {
+      const video = document.createElement('video');
+      video.preload = 'metadata';
+      video.src = URL.createObjectURL(file);
+      video.muted = true;
+      video.playsInline = true;
+      video.currentTime = 1;
+      const videoTimeout = setTimeout(() => resolve(null), 5000);
+      video.onloadeddata = () => { if (video.duration < 1) video.currentTime = 0; };
+      video.onseeked = () => {
+        clearTimeout(videoTimeout);
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          const dataUrl = canvas.toDataURL('image/jpeg');
+          URL.revokeObjectURL(video.src);
+          resolve(dataUrl);
+        } catch(e) { resolve(null); }
+      };
+      video.onerror = () => {
+        clearTimeout(videoTimeout);
+        URL.revokeObjectURL(video.src);
+        resolve(null);
+      };
+    });
+  } else {
+    return URL.createObjectURL(file);
+  }
+};
 
-    // 1. Parse lists
-    const defaultsList = currentDefaults.split(',').map(s => s.trim()).filter(s => s);
-    let aiList = aiKeywordsStr.split(',').map(s => s.trim()).filter(s => s);
+const App = () => {
+  // 1. State Declarations
+  const [theme, setTheme] = useState(() => localStorage.getItem('hackymetagen_theme') || 'dark');
+  const [files, setFiles] = useState([]);
+  
+  const [notificationsEnabled, setNotificationsEnabled] = useState(() => {
+    const saved = localStorage.getItem('hackymetagen_notify');
+    return saved !== null ? JSON.parse(saved) : true;
+  });
 
-    if (defaultsList.length === 0) return aiKeywordsStr;
+  const hasNotifiedRef = useRef(false);
+  const [selectedFileId, setSelectedFileId] = useState(null);
+  const [contentType, setContentType] = useState('image'); 
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [viewMode, setViewMode] = useState('batch'); 
+  const [copiedId, setCopiedId] = useState(null); 
+  
+  const [newKeyword, setNewKeyword] = useState('');
+  const [draggedIndex, setDraggedIndex] = useState(null);
 
-    const countToRemove = defaultsList.length;
-    let removedCount = 0;
+  const [isAutoGenerate, setIsAutoGenerate] = useState(() => {
+    const saved = localStorage.getItem('hackymetagen_auto_generate');
+    return saved !== null ? JSON.parse(saved) : false;
+  });
+  
+  const [useAiCategory, setUseAiCategory] = useState(() => {
+    const saved = localStorage.getItem('hackymetagen_use_ai_category');
+    return saved !== null ? JSON.parse(saved) : false;
+  });
 
-    // 2. Remove short-tail keywords (1-2 words) starting from the END of the list
-    // iterating backwards to safely splice
-    for (let i = aiList.length - 1; i >= 0; i--) {
-        if (removedCount >= countToRemove) break;
-        
-        const wordCount = aiList[i].split(/\s+/).length;
-        if (wordCount <= 2) {
-            aiList.splice(i, 1);
-            removedCount++;
+  const [csvExtension, setCsvExtension] = useState(() => localStorage.getItem('hackymetagen_csv_extension') || 'ai');
+  const [preserveExtension, setPreserveExtension] = useState(() => {
+    const saved = localStorage.getItem('hackymetagen_preserve_extension');
+    return saved !== null ? JSON.parse(saved) : true;
+  });
+
+  // Default Keywords State - No longer persisted in localStorage
+  const [defaultKeywords, setDefaultKeywords] = useState('');
+  
+  const [isKeywordsLocked, setIsKeywordsLocked] = useState(() => {
+    const saved = localStorage.getItem('hackymetagen_keywords_locked');
+    return saved !== null ? JSON.parse(saved) : false;
+  });
+
+  // --- AI MODEL STATE ---
+  const [aiModel, setAiModel] = useState(() => localStorage.getItem('hackymetagen_ai_model') || 'gemini');
+
+  // API Key Handling
+  const [userApiKey, setUserApiKey] = useState(''); 
+  const [isKeySaved, setIsKeySaved] = useState(false); 
+  const [isKeyInvalid, setIsKeyInvalid] = useState(false); 
+  const [showSuccessMessage, setShowSuccessMessage] = useState(false); 
+  const [showErrorMessage, setShowErrorMessage] = useState(false); 
+  const [showTutorial, setShowTutorial] = useState(false); 
+  const [showUnsupportedError, setShowUnsupportedError] = useState(false); 
+  // NEW: Legal Modal State
+  const [activeLegalModal, setActiveLegalModal] = useState(null); 
+  const [isVerifying, setIsVerifying] = useState(false); 
+
+  // UI State
+  const [isGlobalDragging, setIsGlobalDragging] = useState(false);
+  const [featureIndex, setFeatureIndex] = useState(0);
+  const [fadeClass, setFadeClass] = useState('opacity-100 translate-y-0');
+
+  // Refs
+  const fileInputRef = useRef(null);
+  const dragCounter = useRef(0);
+  const sessionId = useRef(0);
+  const processingMutex = useRef(Promise.resolve());
+  
+  const csvExtensionRef = useRef(csvExtension);
+  const preserveExtensionRef = useRef(preserveExtension);
+  const filesRef = useRef(files); 
+  const apiKeyRef = useRef(userApiKey); 
+  const defaultKeywordsRef = useRef(defaultKeywords);
+  const aiModelRef = useRef(aiModel);
+
+  // --- DERIVED STATE (Defined EARLY to avoid ReferenceErrors) ---
+  const activeFile = files.find(f => f.id === selectedFileId);
+  const completeFiles = files.filter(f => f.status === 'complete');
+  const allFilesComplete = files.length > 0 && files.every(f => f.status === 'complete');
+  const totalFiles = files.length;
+  const progressPercent = totalFiles > 0 ? (completeFiles.length / totalFiles) * 100 : 0;
+
+  // Defined as mixed content array using useMemo
+  const features = useMemo(() => [
+    {type: 'jsx', content: (<span className="flex items-center gap-2 whitespace-nowrap truncate max-w-full">Custom Keywords (Appended) Supports<span className="text-[10px] px-1.5 py-0.5 rounded bg-white text-black font-bold uppercase">New</span></span>)},
+    {type: 'jsx', content: (<span className="flex items-center gap-2 whitespace-nowrap truncate max-w-full">Smart Batch Processing (Quota Saver)<span className="text-[10px] px-1.5 py-0.5 rounded bg-white text-black font-bold uppercase">New</span></span>)},
+    {type: 'jsx', content: (<span className="flex items-center gap-2 whitespace-nowrap truncate max-w-full">Files Statistics Panel<span className="text-[10px] px-1.5 py-0.5 rounded bg-white text-black font-bold uppercase">New</span></span>)},
+    {type: 'jsx', content: (<span className="flex items-center gap-2 whitespace-nowrap truncate max-w-full">Notification Sound On Batch Completed<span className="text-[10px] px-1.5 py-0.5 rounded bg-white text-black font-bold uppercase animate-pulse">New</span></span>)},
+    {type: 'jsx', content: (<span className="flex items-center gap-2 whitespace-nowrap truncate max-w-full">AI Approval Result Prediction Beta 0.5<span className="text-[10px] px-1.5 py-0.5 rounded bg-white text-black font-bold uppercase animate-pulse">New</span></span>)},
+    { type: 'text', content: " CSV FileName Extension Selection Support" },
+    { type: 'text', content: " Video Metadata Support" }
+  ], []);
+
+
+  // 2. Effects
+  useEffect(() => { localStorage.setItem('hackymetagen_theme', theme); }, [theme]);
+  useEffect(() => {localStorage.setItem('hackymetagen_notify',JSON.stringify(notificationsEnabled));}, [notificationsEnabled]);
+  useEffect(() => { localStorage.setItem('hackymetagen_auto_generate', JSON.stringify(isAutoGenerate)); }, [isAutoGenerate]);
+  useEffect(() => { localStorage.setItem('hackymetagen_use_ai_category', JSON.stringify(useAiCategory)); }, [useAiCategory]);
+  useEffect(() => { localStorage.setItem('hackymetagen_csv_extension', csvExtension); }, [csvExtension]);
+  useEffect(() => { localStorage.setItem('hackymetagen_preserve_extension', JSON.stringify(preserveExtension)); }, [preserveExtension]);
+  useEffect(() => { localStorage.setItem('hackymetagen_keywords_locked', JSON.stringify(isKeywordsLocked)); }, [isKeywordsLocked]);
+  useEffect(() => { localStorage.setItem('hackymetagen_ai_model', aiModel); aiModelRef.current = aiModel; }, [aiModel]);
+  
+  useEffect(() => { csvExtensionRef.current = csvExtension; }, [csvExtension]);
+  useEffect(() => { preserveExtensionRef.current = preserveExtension; }, [preserveExtension]);
+  useEffect(() => { filesRef.current = files; }, [files]);
+  useEffect(() => { apiKeyRef.current = userApiKey; }, [userApiKey]);
+  useEffect(() => { defaultKeywordsRef.current = defaultKeywords; }, [defaultKeywords]);
+
+  useEffect(() => {
+    let keyKey;
+    if (aiModel === 'groq') keyKey = 'hackymetagen_groq_api_key';
+    else if (aiModel === 'chatgpt') keyKey = 'hackymetagen_openai_api_key';
+    else keyKey = 'hackymetagen_api_key';
+
+    const savedKey = localStorage.getItem(keyKey);
+    if (savedKey) {
+      setIsKeySaved(true);
+      setUserApiKey('');
+      apiKeyRef.current = savedKey;
+    } else {
+      setIsKeySaved(false);
+      setUserApiKey('');
+      apiKeyRef.current = '';
+    }
+    setIsKeyInvalid(false);
+  }, [aiModel]);
+
+  useEffect(() => { document.title = "Hacky MetaGen"; }, []);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setFadeClass('opacity-0 -translate-y-2');
+      setTimeout(() => {
+        setFeatureIndex((prev) => (prev + 1) % features.length);
+        setFadeClass('opacity-100 translate-y-0');
+      }, 300);
+    }, 5000); 
+    return () => clearInterval(interval);
+  }, [features.length]);
+
+  useEffect(() => {
+    if (!notificationsEnabled) return;
+    if (allFilesComplete && !hasNotifiedRef.current) {
+      hasNotifiedRef.current = true;
+      const audio = new Audio('https://www.myinstants.com/media/sounds/rzhd-pribytie-poezda.mp3');
+      audio.volume = 0.35;
+      audio.play().catch(() => {});
+    }
+    if (!allFilesComplete) {
+      hasNotifiedRef.current = false;
+    }
+  }, [allFilesComplete, notificationsEnabled]);
+
+  // 3. Logic Functions
+  const checkApiKeyValidity = async (key, model) => {
+    if (!key) return false;
+    if (model === 'groq') {
+        if (key.trim().startsWith('gsk_') && key.length > 20) return true;
+        try {
+            const response = await fetch("https://api.groq.com/openai/v1/models", {
+                method: "GET",
+                headers: { "Authorization": `Bearer ${key}` }
+            });
+            return response.ok;
+        } catch (e) {
+            return key.trim().startsWith('gsk_');
+        }
+    } else if (model === 'chatgpt') {
+        if (key.trim().startsWith('sk-') && key.length > 20) return true;
+         try {
+            const response = await fetch("https://api.openai.com/v1/models", {
+                method: "GET",
+                headers: { "Authorization": `Bearer ${key}` }
+            });
+            return response.ok;
+        } catch (e) {
+            return key.trim().startsWith('sk-');
+        }
+    } else {
+        try {
+            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}&pageSize=1`);
+            return response.ok;
+        } catch (e) {
+            return false;
         }
     }
+  };
 
-    // 3. If we still haven't removed enough (e.g. AI generated only long tails), remove from end
-    while (removedCount < countToRemove && aiList.length > 0) {
-        aiList.pop();
-        removedCount++;
+  const handleApplyKey = async () => {
+    const keyToTest = userApiKey.trim();
+    if (!keyToTest) return;
+    setIsVerifying(true);
+    const isValid = await checkApiKeyValidity(keyToTest, aiModel);
+    setIsVerifying(false);
+    if (isValid) {
+        let keyKey;
+        if (aiModel === 'groq') keyKey = 'hackymetagen_groq_api_key';
+        else if (aiModel === 'chatgpt') keyKey = 'hackymetagen_openai_api_key';
+        else keyKey = 'hackymetagen_api_key';
+
+        localStorage.setItem(keyKey, keyToTest);
+        setIsKeySaved(true);
+        setIsKeyInvalid(false);
+        setUserApiKey('');
+        apiKeyRef.current = keyToTest;
+        setShowSuccessMessage(true);
+        setTimeout(() => setShowSuccessMessage(false), 5000);
+    } else {
+        setIsKeyInvalid(true);
+        setIsKeySaved(false);
+        setUserApiKey(''); 
+        setShowErrorMessage(true);
+        setTimeout(() => setShowErrorMessage(false), 5000);
     }
+  };
 
-    // 4. Append defaults
+  const mergeKeywords = (aiKeywordsStr, specificDefaults = null) => {
+    const currentDefaults = specificDefaults !== null ? specificDefaults : defaultKeywordsRef.current;
+    if (!currentDefaults || !currentDefaults.trim()) {
+       let list = aiKeywordsStr.split(',').map(s => s.trim()).filter(s => s);
+       if (list.length > TARGET_KEYWORD_COUNT) {
+           return list.slice(0, TARGET_KEYWORD_COUNT).join(', ');
+       }
+       return aiKeywordsStr;
+    }
+    const defaultsList = currentDefaults.split(',').map(s => s.trim()).filter(s => s);
+    let aiList = aiKeywordsStr.split(',').map(s => s.trim()).filter(s => s);
+    if (defaultsList.length === 0) return aiKeywordsStr;
+    const maxAiCount = Math.max(0, TARGET_KEYWORD_COUNT - defaultsList.length);
+    while (aiList.length > maxAiCount) {
+        let indexToRemove = -1;
+        for (let i = aiList.length - 1; i >= 0; i--) {
+            const wordCount = aiList[i].split(/\s+/).length;
+            if (wordCount <= 2) {
+                indexToRemove = i;
+                break;
+            }
+        }
+        if (indexToRemove === -1) {
+            indexToRemove = aiList.length - 1;
+        }
+        aiList.splice(indexToRemove, 1);
+    }
     const combined = [...aiList, ...defaultsList];
-    
-    // 5. Ensure we respect the target max if somehow exceeded significantly, though logic above balances it.
-    // If strict 49 is needed:
-    // return combined.slice(0, 49).join(', ');
     return combined.join(', ');
   };
 
-  // --- API Interaction (BATCHED) ---
   const prepareAssetData = async (fileObj) => {
     let mimeType = '';
     let base64Data = null;
@@ -562,47 +585,48 @@ const features = [
         }
     } else {
         if (fileObj.file.size > 20 * 1024 * 1024) {
-            throw new Error("File too large. Images/Vectors must be under 20MB.");
+             throw new Error("File too large. Images/Vectors must be under 20MB.");
         }
-        base64Data = await new Promise((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onloadend = () => {
-            if (reader.result) {
-                const result = reader.result;
-                const base64 = result.includes(',') ? result.split(',')[1] : result;
-                resolve(base64);
-            } else {
-                reject(new Error("Failed to read file"));
-            }
-          };
-          reader.onerror = () => reject(new Error("File reading error"));
-          reader.readAsDataURL(fileObj.file);
-        });
-        
-        const supportedMimes = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'];
-        let detectedMime = fileObj.file.type;
-        
-        if (!detectedMime || detectedMime === '' || detectedMime === 'application/octet-stream' || !supportedMimes.includes(detectedMime)) {
-             if (['jpg', 'jpeg'].includes(ext)) mimeType = 'image/jpeg';
-             else if (ext === 'png') mimeType = 'image/png';
-             else if (ext === 'webp') mimeType = 'image/webp';
-             else if (['ai', 'eps', 'svg'].includes(ext)) mimeType = 'image/png'; 
-             else mimeType = 'image/jpeg';
+        const compressed = await compressImage(fileObj.file);
+        if (compressed) {
+            base64Data = compressed;
+            mimeType = 'image/jpeg';
         } else {
-            mimeType = detectedMime;
+             base64Data = await new Promise((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onloadend = () => {
+                if (reader.result) {
+                    const result = reader.result;
+                    const base64 = result.includes(',') ? result.split(',')[1] : result;
+                    resolve(base64);
+                } else {
+                    reject(new Error("Failed to read file"));
+                }
+              };
+              reader.onerror = () => reject(new Error("File reading error"));
+              reader.readAsDataURL(fileObj.file);
+            });
+            if (['jpg', 'jpeg'].includes(ext)) mimeType = 'image/jpeg';
+            else if (ext === 'png') mimeType = 'image/png';
+            else if (ext === 'webp') mimeType = 'image/webp';
+            else mimeType = 'image/jpeg';
         }
     }
     return { mimeType, data: base64Data, isVideo };
   };
 
   const generateBatchMetadata = async (fileObjs) => {
-    let activeKey = apiKeyRef.current || localStorage.getItem('hackymetagen_api_key') || apiKey;
+    let keyKey;
+    if (aiModel === 'groq') keyKey = 'hackymetagen_groq_api_key';
+    else if (aiModel === 'chatgpt') keyKey = 'hackymetagen_openai_api_key';
+    else keyKey = 'hackymetagen_api_key';
     
-    if (!activeKey) {
-        throw new Error("Missing API Key. Please click the Info icon to learn how to get one.");
+    let activeKey = apiKeyRef.current || localStorage.getItem(keyKey) || apiKey;
+
+    if (REQUIRE_USER_API_KEY && !activeKey) {
+        throw new Error(`Missing ${aiModel === 'groq' ? 'Groq' : aiModel === 'chatgpt' ? 'ChatGPT' : 'Gemini'} API Key. Please click the Info icon.`);
     }
 
-    // 1. Prepare all assets data
     const assets = await Promise.all(fileObjs.map(async (file) => {
         try {
             const data = await prepareAssetData(file);
@@ -617,103 +641,195 @@ const features = [
         throw new Error("Failed to prepare any files for API transmission.");
     }
 
-    // 2. Build Prompt
-    const categoriesString = ADOBE_CATEGORIES.map(c => `${c.id}. ${c.name}`).join('\n');
-    const systemPrompt = `
-      You are Hacky MetaGen 3.7, a senior SEO expert for Adobe Stock.
-      You are processing a batch of ${validAssets.length} distinct assets.
-      
-      YOUR GOAL: Generate metadata for EACH of the ${validAssets.length} input assets.
-      
-      STRICT RULES FOR EACH ASSET:
-      1. **Title**: 100-125 characters. Natural, readable, descriptive. Include high-value keywords. NO keyword stuffing.
-      2. **Keywords**: Generate EXACTLY 49 keywords. Comma-separated string.
-         - **CRITICAL:** Do NOT generate more than 49 keywords. Stop exactly at 49.
-         - **Priority:** First 5-10 keywords must be most relevant.
-         - **Distribution:** Short-tail (1-2 words): ~30%, Mid-tail (2-3 words): ~45%, Long-tail (4+ words): ~25%.
-         - **Content:** NO brand names, trademarks, or personal names.
-      3. **Category**: Choose the single most appropriate category ID (1-21) from the list below:
-      ${categoriesString}
-      4. **Approval Prediction**: Status ("Accepted" or "Rejected") and Reason.
-
-      OUTPUT FORMAT (JSON ARRAY ONLY):
-      Return a JSON Array containing exactly ${validAssets.length} objects.
-      The order of objects MUST match the order of the input assets provided below (Asset 1, Asset 2, etc.).
-      
-      [
-        {
-          "title": "string",
-          "keywords": "string (comma separated)",
-          "category_id": integer,
-          "approval_status": "Accepted" or "Rejected",
-          "approval_reason": "string"
-        },
-        ...
-      ]
-    `;
-
-    const contentParts = [{ text: systemPrompt }];
-    
-    validAssets.forEach((asset, index) => {
-        contentParts.push({ text: `\n\n--- INPUT ASSET ${index + 1} ---` });
-        if (asset.isVideo && Array.isArray(asset.data)) {
-            asset.data.forEach(frameData => {
-                contentParts.push({ inlineData: { mimeType: asset.mimeType, data: frameData } });
-            });
-        } else {
-            contentParts.push({ inlineData: { mimeType: asset.mimeType, data: asset.data } });
-        }
-    });
-
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 90000); // 90s timeout for batch
+    const timeoutId = setTimeout(() => controller.abort(), 90000);
 
     try {
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${activeKey}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                contents: [{ role: "user", parts: contentParts }],
-                generationConfig: { responseMimeType: "application/json" }
-            }),
-            signal: controller.signal
-        });
-
-        if (!response.ok) {
-            let errorMsg = `API Error: ${response.status} ${response.statusText}`;
-            try {
-                const errorData = await response.json();
-                if (errorData.error) errorMsg = `API Error: ${JSON.stringify(errorData.error)}`;
-            } catch (e) {}
-            throw new Error(errorMsg);
-        }
-
-        const data = await response.json();
-        if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
-        if (!data.candidates || !data.candidates[0]) throw new Error("No candidates returned from AI");
-        
-        let resultText = data.candidates[0].content.parts[0].text;
-        // Clean markdown
-        resultText = resultText.replace(/```json/g, '').replace(/```/g, '').trim();
-        
         let parsedResult;
-        try {
-            parsedResult = JSON.parse(resultText);
-        } catch (e) {
-            throw new Error("Failed to parse AI response as JSON");
+
+        if (USE_BACKEND) {
+            const response = await fetch('/api/generate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    apiKey: activeKey,
+                    assets: validAssets,
+                    modelProvider: aiModel
+                }),
+                signal: controller.signal
+            });
+
+            if (!response.ok) {
+                let errorMsg = `API Error: ${response.status} ${response.statusText}`;
+                try {
+                    const errorData = await response.json();
+                    if (errorData.error) errorMsg = `API Error: ${JSON.stringify(errorData.error)}`;
+                } catch (e) {}
+                
+                if (response.status === 404) {
+                    errorMsg = "Backend endpoint /api/generate not found. (If testing in Canvas, set USE_BACKEND = false)";
+                }
+                throw new Error(errorMsg);
+            }
+
+            parsedResult = await response.json();
+
+        } else {
+            const categoriesString = ADOBE_CATEGORIES.map(c => `${c.id}. ${c.name}`).join('\n');
+            const systemPromptText = `
+              You are Hacky MetaGen 3.9, a senior SEO expert for Adobe Stock.
+              You are processing a batch of ${validAssets.length} distinct assets.
+              YOUR GOAL: Generate metadata for EACH of the ${validAssets.length} input assets.
+              STRICT RULES FOR EACH ASSET:
+              1. **Title**: EXACTLY 100-120 characters. Natural, readable, descriptive. Include high-value keywords. NO keyword stuffing.
+              2. **Keywords**: Generate EXACTLY 49 keywords. Comma-separated string.
+                 - **CRITICAL:** Do NOT generate more than or less than 49 keywords. Stop exactly at 49.
+                 - **Priority:** First 5-10 keywords must be most relevant, most impactful...
+                 This primarily determines search ranking.
+                 - **Distribution:** Short-tail (1-2 words): ~30%, Mid-tail (2-3 words): ~45%, Long-tail (3-4 words): ~25%.
+                 - **Content:** NO brand names, trademarks, or personal names.
+              3. **Category**: Choose the single most appropriate category ID (1-21) from the list below:
+              ${categoriesString}
+              4. **Approval Prediction**: Status ("Accepted" or "Rejected") and Reason.
+
+              OUTPUT FORMAT (JSON ARRAY ONLY):
+              Return a JSON Array containing exactly ${validAssets.length} objects.
+              [
+                {
+                  "title": "string",
+                  "keywords": "string (comma separated)",
+                  "category_id": integer,
+                  "approval_status": "Accepted" or "Rejected",
+                  "approval_reason": "string"
+                },
+                ...
+              ]
+            `;
+
+            if (aiModel === 'groq' || aiModel === 'chatgpt') {
+                const endpoint = aiModel === 'chatgpt' ? OPENAI_API_URL : GROQ_API_URL;
+                const modelName = aiModel === 'chatgpt' ? OPENAI_MODEL : GROQ_MODEL;
+
+                const messages = [
+                    {
+                        role: "user",
+                        content: [
+                            { type: "text", text: systemPromptText }
+                        ]
+                    }
+                ];
+
+                validAssets.forEach((asset, index) => {
+                    messages[0].content.push({ type: "text", text: `\n\n--- INPUT ASSET ${index + 1} ---` });
+                    
+                    if (asset.isVideo && Array.isArray(asset.data)) {
+                        asset.data.forEach(frameData => {
+                             messages[0].content.push({
+                                type: "image_url",
+                                image_url: { url: `data:image/jpeg;base64,${frameData}` }
+                             });
+                        });
+                    } else {
+                         messages[0].content.push({
+                            type: "image_url",
+                            image_url: { url: `data:${asset.mimeType};base64,${asset.data}` }
+                         });
+                    }
+                });
+
+                const response = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${activeKey}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        model: modelName,
+                        messages: messages,
+                        temperature: 0.7,
+                        max_tokens: 4096,
+                        response_format: { type: "json_object" }
+                    }),
+                    signal: controller.signal
+                });
+
+                if (!response.ok) {
+                    let errorMsg = `${aiModel === 'chatgpt' ? 'OpenAI' : 'Groq'} API Error: ${response.status}`;
+                    try {
+                        const err = await response.json();
+                        errorMsg += ` - ${JSON.stringify(err)}`;
+                    } catch(e){}
+                    throw new Error(errorMsg);
+                }
+
+                const data = await response.json();
+                let resultText = data.choices[0].message.content;
+                resultText = resultText.replace(/```json/g, '').replace(/```/g, '').trim();
+                
+                let rawParse = JSON.parse(resultText);
+                
+                if (Array.isArray(rawParse)) {
+                    parsedResult = rawParse;
+                } else if (typeof rawParse === 'object') {
+                    const arrayVal = Object.values(rawParse).find(v => Array.isArray(v));
+                    if (arrayVal) parsedResult = arrayVal;
+                    else parsedResult = [rawParse]; 
+                } else {
+                    throw new Error(`Unexpected JSON format from ${aiModel}`);
+                }
+
+            } else {
+                // --- GOOGLE GEMINI API CALL ---
+                const contentParts = [{ text: systemPromptText }];
+                
+                validAssets.forEach((asset, index) => {
+                    contentParts.push({ text: `\n\n--- INPUT ASSET ${index + 1} ---` });
+                    if (asset.isVideo && Array.isArray(asset.data)) {
+                        asset.data.forEach(frameData => {
+                            contentParts.push({ inlineData: { mimeType: asset.mimeType, data: frameData } });
+                        });
+                    } else {
+                        contentParts.push({ inlineData: { mimeType: asset.mimeType, data: asset.data } });
+                    }
+                });
+
+                const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${activeKey}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contents: [{ role: "user", parts: contentParts }],
+                        generationConfig: { responseMimeType: "application/json" }
+                    }),
+                    signal: controller.signal
+                });
+
+                if (!response.ok) {
+                    let errorMsg = `API Error: ${response.status} ${response.statusText}`;
+                    try {
+                        const errorData = await response.json();
+                        if (errorData.error) errorMsg = `API Error: ${JSON.stringify(errorData.error)}`;
+                    } catch (e) {}
+                    throw new Error(errorMsg);
+                }
+
+                const data = await response.json();
+                if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
+                if (!data.candidates || !data.candidates[0]) throw new Error("No candidates returned from AI");
+                
+                let resultText = data.candidates[0].content.parts[0].text;
+                resultText = resultText.replace(/```json/g, '').replace(/```/g, '').trim();
+                parsedResult = JSON.parse(resultText);
+            }
         }
 
         if (!Array.isArray(parsedResult)) {
-            // Attempt to handle single object return if AI failed to batch
             if (typeof parsedResult === 'object') parsedResult = [parsedResult];
             else throw new Error("AI did not return a JSON Array");
         }
 
-        // Map results back to IDs
         const finalResults = {};
         validAssets.forEach((asset, idx) => {
             if (parsedResult[idx]) {
-                // Post-process keywords
                 if (parsedResult[idx].keywords && typeof parsedResult[idx].keywords === 'string') {
                     let kws = parsedResult[idx].keywords.split(',').map(k => k.trim()).filter(k => k.length > 0);
                     if (kws.length > 49) kws = kws.slice(0, 49);
@@ -734,14 +850,12 @@ const features = [
 
   const runBatchGeneration = async (filesToProcess) => {
      const nextChain = processingMutex.current.catch(() => {}).then(async () => {
-         // Chunk files into batches
          const chunks = [];
          for (let i = 0; i < filesToProcess.length; i += BATCH_SIZE) {
              chunks.push(filesToProcess.slice(i, i + BATCH_SIZE));
          }
 
          for (const chunk of chunks) {
-            // Check if files still exist in state
             const currentFiles = filesRef.current;
             const validChunk = chunk.filter(f => currentFiles.find(cf => cf.id === f.id));
             if (validChunk.length === 0) continue;
@@ -757,9 +871,7 @@ const features = [
                     setFiles(prev => prev.map(f => {
                         const result = batchResults[f.id];
                         if (result) {
-                            // Apply Default Keywords Logic Here
                             const finalKeywords = mergeKeywords(result.keywords);
-                            
                             const kwArray = finalKeywords.split(',').map(k => k.trim());
                             const analysis = {
                                 short: kwArray.filter(k => k.split(' ').length <= 2).length,
@@ -786,6 +898,7 @@ const features = [
                             return { 
                                 ...f, 
                                 status: 'complete', 
+                                originalAiKeywords: result.keywords, // Store Raw AI Output
                                 metadata: { ...result, keywords: finalKeywords },
                                 keywordAnalysis: analysis,
                                 aiCategoryId: predictedCategory, 
@@ -793,11 +906,10 @@ const features = [
                                 name: finalName
                             };
                         }
-                        // If file was in chunk but no result returned (unlikely unless array mismatch), return f
                         return f;
                     }));
                     success = true;
-                    await new Promise(resolve => setTimeout(resolve, 1000)); // Small delay between batches
+                    await new Promise(resolve => setTimeout(resolve, 1000)); 
                 } catch (error) {
                     console.error(`Error processing batch:`, error);
                     lastError = error;
@@ -835,168 +947,7 @@ const features = [
      processingMutex.current = nextChain;
      return nextChain;
   };
-
-  const handleApplyKeyClick = () => handleApplyKey();
-
-  const handleFileUpload = (e) => {
-    if (e.target.files && e.target.files.length > 0) {
-      processUploadedFiles(Array.from(e.target.files));
-    }
-  };
-
-  const processUploadedFiles = useCallback(async (uploadedFiles) => {
-    const activeKey = apiKeyRef.current || localStorage.getItem('hackymetagen_api_key') || apiKey;
-
-    if (!activeKey) {
-      setShowTutorial(true);
-      if (fileInputRef.current) fileInputRef.current.value = '';
-      return;
-    }
-
-    // 1. STRICTLY BLOCK UNSUPPORTED FILES
-    const supportedExtensions = ['jpg', 'jpeg', 'png', 'webp', 'ai', 'eps', 'svg', 'mov', 'mp4', 'avi', 'webm', 'mkv', 'mpg', 'mpeg'];
-    let hasUnsupported = false;
-    for (const file of uploadedFiles) {
-       const ext = file.name.split('.').pop().toLowerCase();
-       if (!supportedExtensions.includes(ext)) {
-          hasUnsupported = true;
-          break;
-       }
-    }
-
-    if (hasUnsupported) {
-        setShowUnsupportedError(true);
-        if (fileInputRef.current) fileInputRef.current.value = '';
-        return; 
-    }
-
-    const currentSession = sessionId.current;
-    const newFilesPromises = uploadedFiles.map(async (file) => {
-      let fileName = file.name; 
-      const isMov = fileName.toLowerCase().endsWith('.mov');
-      const ext = fileName.split('.').pop().toLowerCase();
-      let determinedType = contentType;
-      if (['mov', 'mp4', 'avi', 'webm', 'mkv', 'mpg', 'mpeg'].includes(ext) || file.type.startsWith('video/')) {
-        determinedType = 'video';
-      } else if (['ai', 'eps', 'svg'].includes(ext)) {
-        determinedType = 'vector';
-      } else {
-        determinedType = 'image';
-      }
-      const previewUrl = await generateThumbnail(file);
-      return {
-        id: crypto.randomUUID(),
-        file,
-        name: fileName,
-        preview: previewUrl,
-        type: determinedType,
-        status: isAutoGenerate ? 'processing' : 'pending',
-        categoryId: 8, 
-        aiCategoryId: null, 
-        metadata: { title: '', keywords: '' },
-        keywordAnalysis: { short: 0, mid: 0, long: 0, total: 0 }
-      };
-    });
-
-    const newFiles = await Promise.all(newFilesPromises);
-    if (currentSession !== sessionId.current) return; 
-
-    setFiles(prev => {
-        const updated = [...prev, ...newFiles];
-        return updated;
-    });
-    
-    if (files.length === 0 && newFiles.length > 0) {
-        setSelectedFileId(newFiles[0].id);
-    }
-    if (isAutoGenerate) {
-        runBatchGeneration(newFiles);
-    }
-  }, [contentType, files.length, selectedFileId, isAutoGenerate, useAiCategory, preserveExtension, csvExtension, userApiKey]);
-
-  const removeFile = (id, e) => {
-    e.stopPropagation();
-    setFiles(prev => prev.filter(f => f.id !== id));
-    if (selectedFileId === id) setSelectedFileId(null);
-  };
-
-  const handleResetUploads = () => {
-    if (files.length === 0) return;
-    sessionId.current += 1;
-    files.forEach(file => { if (file.preview && file.preview.startsWith('blob:')) URL.revokeObjectURL(file.preview); });
-    setFiles([]);
-    setSelectedFileId(null);
-    setViewMode('batch');
-    setIsProcessing(false);
-    setIsGlobalDragging(false);
-    if (fileInputRef.current) fileInputRef.current.value = '';
-  };
-
-  const updateFileExtension = (id, newExt) => {
-    setFiles(prev => prev.map(f => {
-      if (f.id !== id) return f;
-      const newName = f.name.replace(/\.[^/.]+$/, "") + "." + newExt;
-      return { ...f, name: newName };
-    }));
-  };
-
-  const generateMetadata = async (fileObj) => {
-    if (!fileObj) return;
-    setFiles(prev => prev.map(f => f.id === fileObj.id ? { ...f, status: 'processing' } : f));
-    try {
-      // Use the batch function but with a single item
-      const batchResults = await generateBatchMetadata([fileObj]);
-      const jsonResult = batchResults[fileObj.id];
-      
-      if (!jsonResult) throw new Error("No result returned from AI");
-
-      // Apply Default Keywords Logic Here
-      const finalKeywords = mergeKeywords(jsonResult.keywords);
-
-      const kwArray = finalKeywords.split(',').map(k => k.trim());
-      const analysis = {
-        short: kwArray.filter(k => k.split(' ').length <= 2).length,
-        mid: kwArray.filter(k => k.split(' ').length === 3).length,
-        long: kwArray.filter(k => k.split(' ').length >= 4).length,
-        total: kwArray.length
-      };
-      setFiles(prev => prev.map(f => {
-        if (f.id !== fileObj.id) return f;
-        const currentCsvExt = csvExtensionRef.current;
-        const currentPreserve = preserveExtensionRef.current;
-        let finalName = f.name;
-        if (!currentPreserve) {
-            const isVideoFile = f.type === 'video';
-            const isVideoExt = ['mov', 'mp4', 'mpg'].includes(currentCsvExt);
-            if (isVideoFile === isVideoExt) {
-                finalName = f.file.name.replace(/\.[^/.]+$/, "") + "." + currentCsvExt;
-            } else if (!isVideoFile && !isVideoExt) {
-                finalName = f.file.name.replace(/\.[^/.]+$/, "") + "." + currentCsvExt;
-            }
-        }
-        return { 
-          ...f, 
-          status: 'complete', 
-          metadata: { ...jsonResult, keywords: finalKeywords },
-          keywordAnalysis: analysis,
-          aiCategoryId: jsonResult.category_id,
-          categoryId: useAiCategory ? (jsonResult.category_id || 8) : 8,
-          name: finalName
-        };
-      }));
-    } catch (error) {
-      console.error("Generation Error:", error);
-      let displayError = error.message || "Unknown error";
-      if (displayError.includes("API Key") || displayError.includes("403") || displayError.includes("400") || displayError.includes("Invalid")) {
-         displayError = "Check or replace to a new api key. (" + displayError + ")";
-         setIsKeyInvalid(true);
-         setIsKeySaved(false);
-         setUserApiKey('');
-      }
-      setFiles(prev => prev.map(f => f.id === fileObj.id ? { ...f, status: 'error', errorMessage: displayError } : f));
-    }
-  };
-
+  
   const handleGenerateAll = async () => {
     setIsProcessing(true);
     const pendingFiles = files.filter(f => f.status !== 'complete');
@@ -1084,68 +1035,170 @@ const features = [
     updateFileKeywords(activeFile.id, updatedKeywordsString);
     setDraggedIndex(null);
   };
+  
+  const handleApplyKeyClick = () => handleApplyKey();
 
-const StatCard = ({ icon, label, value, accent }) => {
-  const accents = {
-    blue: 'text-blue-400 bg-blue-500/10',
-    green: 'text-green-400 bg-green-500/10',
-    yellow: 'text-yellow-400 bg-yellow-500/10',
-    orange: 'text-orange-400 bg-orange-500/10',
-    red: 'text-red-400 bg-red-500/10',
+  const handleFileUpload = (e) => {
+    if (e.target.files && e.target.files.length > 0) {
+      processUploadedFiles(Array.from(e.target.files));
+    }
   };
 
-  return (
-    <div
-      className="
-        flex items-center gap-3
-        px-3 py-2
-        rounded-lg border
-        bg-slate-800/60 border-slate-700
-        flex-1 min-w-0
-      "
-    >
-      <div
-        className={`w-8 h-8 rounded-md flex items-center justify-center ${accents[accent]}`}
-      >
-        {React.cloneElement(icon, { size: 14 })}
-      </div>
+  const processUploadedFiles = useCallback(async (uploadedFiles) => {
+    let keyKey;
+    if (aiModel === 'groq') keyKey = 'hackymetagen_groq_api_key';
+    else if (aiModel === 'chatgpt') keyKey = 'hackymetagen_openai_api_key';
+    else keyKey = 'hackymetagen_api_key';
+    
+    const activeKey = apiKeyRef.current || localStorage.getItem(keyKey) || apiKey;
 
-      <div className="flex flex-col leading-tight">
-        <span className="text-[9px] uppercase tracking-wider text-slate-400">
-          {label}
-        </span>
-        <span className="text-lg font-semibold text-white">
-          {value}
-        </span>
-      </div>
-    </div>
-  );
-};
-  
-  // --- Main Render Return ---
-  const activeFile = files.find(f => f.id === selectedFileId);
-  const completeFiles = files.filter(f => f.status === 'complete');
-  const allFilesComplete = files.length > 0 && files.every(f => f.status === 'complete');
-  
-useEffect(() => {
-  if (!notificationsEnabled) return;
+    if (REQUIRE_USER_API_KEY && !activeKey) {
+      setShowTutorial(true);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
 
-  if (allFilesComplete && !hasNotifiedRef.current) {
-    hasNotifiedRef.current = true;
+    const supportedExtensions = ['jpg', 'jpeg', 'png', 'webp', 'ai', 'eps', 'svg', 'mov', 'mp4', 'avi', 'webm', 'mkv', 'mpg', 'mpeg'];
+    let hasUnsupported = false;
+    for (const file of uploadedFiles) {
+       const ext = file.name.split('.').pop().toLowerCase();
+       if (!supportedExtensions.includes(ext)) {
+          hasUnsupported = true;
+          break;
+       }
+    }
 
-    // Use the uploaded applepay.mp3 file
-    const audio = new Audio('https://www.myinstants.com/media/sounds/rzhd-pribytie-poezda.mp3');
-    audio.volume = 0.35;
-    audio.play().catch(() => {});
-  }
+    if (hasUnsupported) {
+        setShowUnsupportedError(true);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+        return; 
+    }
 
-  if (!allFilesComplete) {
-    hasNotifiedRef.current = false;
-  }
-}, [allFilesComplete, notificationsEnabled]);
-  
-  const totalFiles = files.length;
-  const progressPercent = totalFiles > 0 ? (completeFiles.length / totalFiles) * 100 : 0;
+    const currentSession = sessionId.current;
+    const newFilesPromises = uploadedFiles.map(async (file) => {
+      let fileName = file.name; 
+      const isMov = fileName.toLowerCase().endsWith('.mov');
+      const ext = fileName.split('.').pop().toLowerCase();
+      let determinedType = contentType;
+      if (['mov', 'mp4', 'avi', 'webm', 'mkv', 'mpg', 'mpeg'].includes(ext) || file.type.startsWith('video/')) {
+        determinedType = 'video';
+      } else if (['ai', 'eps', 'svg'].includes(ext)) {
+        determinedType = 'vector';
+      } else {
+        determinedType = 'image';
+      }
+      const previewUrl = await generateThumbnail(file);
+      return {
+        id: crypto.randomUUID(),
+        file,
+        name: fileName,
+        preview: previewUrl,
+        type: determinedType,
+        status: isAutoGenerate ? 'processing' : 'pending',
+        categoryId: 8, 
+        aiCategoryId: null, 
+        metadata: { title: '', keywords: '' },
+        keywordAnalysis: { short: 0, mid: 0, long: 0, total: 0 }
+      };
+    });
+
+    const newFiles = await Promise.all(newFilesPromises);
+    if (currentSession !== sessionId.current) return; 
+
+    setFiles(prev => {
+        const updated = [...prev, ...newFiles];
+        return updated;
+    });
+    
+    if (files.length === 0 && newFiles.length > 0) {
+        setSelectedFileId(newFiles[0].id);
+    }
+    if (isAutoGenerate) {
+        runBatchGeneration(newFiles);
+    }
+  }, [contentType, files.length, selectedFileId, isAutoGenerate, useAiCategory, preserveExtension, csvExtension, userApiKey, aiModel]);
+
+  const removeFile = (id, e) => {
+    e.stopPropagation();
+    setFiles(prev => prev.filter(f => f.id !== id));
+    if (selectedFileId === id) setSelectedFileId(null);
+  };
+
+  const handleResetUploads = () => {
+    if (files.length === 0) return;
+    sessionId.current += 1;
+    files.forEach(file => { if (file.preview && file.preview.startsWith('blob:')) URL.revokeObjectURL(file.preview); });
+    setFiles([]);
+    setSelectedFileId(null);
+    setViewMode('batch');
+    setIsProcessing(false);
+    setIsGlobalDragging(false);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const updateFileExtension = (id, newExt) => {
+    setFiles(prev => prev.map(f => {
+      if (f.id !== id) return f;
+      const newName = f.name.replace(/\.[^/.]+$/, "") + "." + newExt;
+      return { ...f, name: newName };
+    }));
+  };
+
+  const generateMetadata = async (fileObj) => {
+    if (!fileObj) return;
+    setFiles(prev => prev.map(f => f.id === fileObj.id ? { ...f, status: 'processing' } : f));
+    try {
+      const batchResults = await generateBatchMetadata([fileObj]);
+      const jsonResult = batchResults[fileObj.id];
+      
+      if (!jsonResult) throw new Error("No result returned from AI");
+
+      const finalKeywords = mergeKeywords(jsonResult.keywords);
+
+      const kwArray = finalKeywords.split(',').map(k => k.trim());
+      const analysis = {
+        short: kwArray.filter(k => k.split(' ').length <= 2).length,
+        mid: kwArray.filter(k => k.split(' ').length === 3).length,
+        long: kwArray.filter(k => k.split(' ').length >= 4).length,
+        total: kwArray.length
+      };
+      setFiles(prev => prev.map(f => {
+        if (f.id !== fileObj.id) return f;
+        const currentCsvExt = csvExtensionRef.current;
+        const currentPreserve = preserveExtensionRef.current;
+        let finalName = f.name;
+        if (!currentPreserve) {
+            const isVideoFile = f.type === 'video';
+            const isVideoExt = ['mov', 'mp4', 'mpg'].includes(currentCsvExt);
+            if (isVideoFile === isVideoExt) {
+                finalName = f.file.name.replace(/\.[^/.]+$/, "") + "." + currentCsvExt;
+            } else if (!isVideoFile && !isVideoExt) {
+                finalName = f.file.name.replace(/\.[^/.]+$/, "") + "." + currentCsvExt;
+            }
+        }
+        return { 
+          ...f, 
+          status: 'complete', 
+          originalAiKeywords: jsonResult.keywords, // Store Raw AI Output
+          metadata: { ...jsonResult, keywords: finalKeywords },
+          keywordAnalysis: analysis,
+          aiCategoryId: jsonResult.category_id,
+          categoryId: useAiCategory ? (jsonResult.category_id || 8) : 8,
+          name: finalName
+        };
+      }));
+    } catch (error) {
+      console.error("Generation Error:", error);
+      let displayError = error.message || "Unknown error";
+      if (displayError.includes("API Key") || displayError.includes("403") || displayError.includes("400") || displayError.includes("Invalid")) {
+         displayError = "Check or replace to a new api key. (" + displayError + ")";
+         setIsKeyInvalid(true);
+         setIsKeySaved(false);
+         setUserApiKey('');
+      }
+      setFiles(prev => prev.map(f => f.id === fileObj.id ? { ...f, status: 'error', errorMessage: displayError } : f));
+    }
+  };
 
   return (
     <div 
@@ -1267,16 +1320,31 @@ useEffect(() => {
                   </div>
                   
                   <ol className={`list-decimal list-inside space-y-3 mb-6 text-sm ${theme === 'dark' ? 'text-slate-300' : 'text-slate-600'}`}>
-                      <li>Go to <a href="https://aistudio.google.com" target="_blank" rel="noreferrer" className="font-semibold text-indigo-500 hover:underline">Google AI Studio</a>.</li>
-                      <li>Log in with your Google account.</li>
-                      <li>Click the blue <span className="font-semibold">"Get API Key"</span> button.</li>
-                      <li>Create a key in a new project.</li>
+                      {aiModel === 'groq' ? (
+                          <>
+                           <li>Go to <a href="https://console.groq.com/keys" target="_blank" rel="noreferrer" className="font-semibold text-indigo-500 hover:underline">Groq Cloud Console</a>.</li>
+                           <li>Log in or Sign up.</li>
+                           <li>Navigate to API Keys and create a new key.</li>
+                          </>
+                      ) : aiModel === 'chatgpt' ? (
+                          <>
+                           <li>Go to <a href="https://platform.openai.com/api-keys" target="_blank" rel="noreferrer" className="font-semibold text-indigo-500 hover:underline">OpenAI Platform</a>.</li>
+                           <li>Log in or Sign up.</li>
+                           <li>Create a new secret key.</li>
+                          </>
+                      ) : (
+                          <>
+                           <li>Go to <a href="https://aistudio.google.com" target="_blank" rel="noreferrer" className="font-semibold text-indigo-500 hover:underline">Google AI Studio</a>.</li>
+                           <li>Log in with your Google account.</li>
+                           <li>Click the blue <span className="font-semibold">"Get API Key"</span> button.</li>
+                          </>
+                      )}
                       <li>Copy the key and paste it into the box above.</li>
                   </ol>
                   
                   <div className="flex gap-3">
                     <a 
-                        href="https://aistudio.google.com/app/api-keys" 
+                        href={aiModel === 'groq' ? "https://console.groq.com/keys" : aiModel === 'chatgpt' ? "https://platform.openai.com/api-keys" : "https://aistudio.google.com/app/api-keys"} 
                         target="_blank" 
                         rel="noreferrer"
                         className="flex-1 py-3 text-center bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-semibold flex items-center justify-center gap-2 transition-colors"
@@ -1321,7 +1389,7 @@ useEffect(() => {
         MetaGen
       </span>
       <span className="text-xs align-top bg-indigo-500/20 text-indigo-500 px-1.5 py-0.5 rounded ml-1">
-        3.7
+        3.9
       </span>
     </h1>
   </div>
@@ -1335,15 +1403,49 @@ useEffect(() => {
           showSuccessMessage ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-4'
         }`}
       >
-        Key Inserted to The Browser Storage
+        Key Inserted
       </span>
       <span
         className={`absolute right-0 text-xs font-semibold text-red-500 transition-all duration-500 ${
           showErrorMessage ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-4'
         }`}
       >
-        Please Recheck Your Api Key and Enter
+        Invalid API Key
       </span>
+    </div>
+
+    {/* Model Toggle */}
+    <div className={`flex rounded-lg p-0.5 border ${theme === 'dark' ? 'bg-slate-800 border-slate-700' : 'bg-slate-100 border-slate-300'}`}>
+        <button
+            onClick={() => setAiModel('gemini')}
+            className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
+                aiModel === 'gemini'
+                ? 'bg-blue-600 text-white shadow-sm'
+                : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+            }`}
+        >
+            Gemini
+        </button>
+        <button
+            onClick={() => setAiModel('groq')}
+            className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all flex items-center gap-1 ${
+                aiModel === 'groq'
+                ? 'bg-blue-600 text-white shadow-sm'
+                : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+            }`}
+        >
+            Groq <span className="text-[9px] uppercase opacity-75">Beta</span>
+        </button>
+        <button
+            onClick={() => setAiModel('chatgpt')}
+            className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all flex items-center gap-1 ${
+                aiModel === 'chatgpt'
+                ? 'bg-blue-600 text-white shadow-sm'
+                : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+            }`}
+        >
+            ChatGPT
+        </button>
     </div>
 
     {/* API Key Input */}
@@ -1352,18 +1454,23 @@ useEffect(() => {
         type="text"
         placeholder={
           isKeyInvalid
-            ? 'Check Or Replace'
+            ? 'Check Key'
             : isKeySaved
-            ? 'System Ready'
-            : 'Enter Gemini API Key'
+            ? 'Ready'
+            : aiModel === 'groq' ? 'Enter Groq Key' : aiModel === 'chatgpt' ? 'Enter OpenAI Key' : 'Enter Gemini Key'
         }
         value={userApiKey}
         onChange={(e) => {
           const val = e.target.value;
           setUserApiKey(val);
 
+          // Clear stored key if user clears input
           if (val === '') {
-            localStorage.removeItem('hackymetagen_api_key');
+            let keyKey;
+            if (aiModel === 'groq') keyKey = 'hackymetagen_groq_api_key';
+            else if (aiModel === 'chatgpt') keyKey = 'hackymetagen_openai_api_key';
+            else keyKey = 'hackymetagen_api_key';
+            localStorage.removeItem(keyKey);
             apiKeyRef.current = '';
             setIsKeySaved(false);
           } else {
@@ -1373,9 +1480,9 @@ useEffect(() => {
         }}
         className={`text-xs px-3 py-2 rounded-lg border transition-all w-24 focus:w-48 sm:w-32 sm:focus:w-64 ${
           isKeyInvalid
-            ? 'bg-red-500/10 border-red-500 text-red-500'
+            ? 'bg-red-500/10 border-red-500 text-red-500 placeholder:text-red-500'
             : isKeySaved
-            ? 'bg-green-500/10 border-green-500 text-green-500'
+            ? 'bg-blue-500/10 border-blue-500 text-blue-500 placeholder:text-blue-500 text-center'
             : theme === 'dark'
             ? 'bg-slate-800 border-slate-700 text-white'
             : 'bg-slate-100 border-slate-300 text-slate-900'
@@ -1449,11 +1556,10 @@ useEffect(() => {
             <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400">Metadata Generator</span>
           </h2>
           <p className={`text-lg max-w-2xl mx-auto mb-4 ${theme === 'dark' ? 'text-slate-400' : 'text-slate-600'}`}>
-            <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400">Smart</span> All In One AI automation for your image, video, & vector assets. Just upload, let AI handle the rest. 
-            SEO Optimized for Adobe Stock.
+            <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400">Smart</span> All In One SEO-optimized AI automation for images, videos for Adobe Stock.
           </p>
-          <p className="text-sm max-w-2xl mx-auto text-blue-400 font-semibold mb-8">
-            (Important: Because of API usage limits, the Gemini API key must be replaced with a new one after every 20-50 processed images.)
+          <p className={`text-xs max-w-2xl mx-auto font-semibold mb-8 ${theme === 'dark' ? 'text-white' : 'text-slate-700'}`}>
+            Important: Upload at least 3 images per batch and Keep Disable Auto Generate Button to maximize your API key value or you have to replace your key to new one after every 20-30 processed images.
           </p>
             
         </div>
@@ -1557,22 +1663,53 @@ useEffect(() => {
             <div className="flex items-center gap-1 mb-1 pl-1">
                 <Tags size={12} className={theme === 'dark' ? 'text-indigo-400' : 'text-indigo-600'} />
                 <label className={`text-[10px] font-bold uppercase tracking-wider ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>
-                Default Keywords (Appended)
+                Custom Keywords (Appended)
                 </label>
             </div>
-            <textarea
-                value={defaultKeywords}
-                onChange={(e) => setDefaultKeywords(e.target.value)}
-                placeholder="e.g. vector, illustration, abstract (comma separated)"
-                rows={2}
-                className={`w-full text-xs p-2 rounded-xl border font-medium transition-all resize-none ${
-                theme === 'dark' 
-                    ? 'bg-slate-800 border-slate-700 text-slate-300 focus:border-indigo-500 focus:bg-slate-800' 
-                    : 'bg-white border-slate-300 text-slate-600 focus:border-indigo-500'
-                }`}
-            />
+            <div className="flex gap-2">
+                <textarea
+                    value={defaultKeywords}
+                    onChange={(e) => setDefaultKeywords(e.target.value)}
+                    disabled={isKeywordsLocked}
+                    placeholder="e.g. vector, illustration, abstract (comma separated)"
+                    rows={2}
+                    className={`flex-1 text-xs p-2 rounded-xl border font-medium transition-all resize-none ${
+                    theme === 'dark' 
+                        ? 'bg-slate-800 border-slate-700 text-slate-300 focus:border-indigo-500 focus:bg-slate-800 disabled:opacity-50' 
+                        : 'bg-white border-slate-300 text-slate-600 focus:border-indigo-500 disabled:bg-slate-100'
+                    }`}
+                />
+                <div className="flex flex-col gap-1">
+                    <button
+                        onClick={() => setIsKeywordsLocked(!isKeywordsLocked)}
+                        className={`flex-1 px-3 rounded-xl border font-medium text-[10px] uppercase tracking-wide transition-colors flex flex-col items-center justify-center gap-0.5 ${
+                            isKeywordsLocked
+                            ? 'bg-amber-500/10 text-amber-500 border-amber-500/50 hover:bg-amber-500/20'
+                            : 'bg-indigo-500/10 text-indigo-500 border-indigo-500/50 hover:bg-indigo-500/20'
+                        }`}
+                        title={isKeywordsLocked ? "Unlock to edit" : "Lock keywords for generation"}
+                    >
+                        {isKeywordsLocked ? <Lock size={12} /> : <Plus size={12} />}
+                        {isKeywordsLocked ? 'Edit' : 'Add'}
+                    </button>
+                    <button
+                        onClick={handleUpdateCompletedFiles}
+                        className={`flex-1 px-3 rounded-xl border font-medium text-[10px] uppercase tracking-wide transition-colors flex flex-col items-center justify-center gap-0.5 ${
+                            theme === 'dark'
+                            ? 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700 hover:text-white'
+                            : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-100'
+                        }`}
+                        title="Update all completed files with these keywords"
+                    >
+                        <ArrowRightLeft size={12} />
+                        Update
+                    </button>
+                </div>
+            </div>
             <p className="text-[10px] text-slate-500 pl-1 mt-0.5">
-                Automatically removes short-tail keywords to make room.
+                {isKeywordsLocked 
+                    ? <span className="text-green-500 flex items-center gap-1"><Check size={10}/> Keywords locked and ready for generation.</span> 
+                    : "Automatically removes short-tail keywords to make room."}
             </p>
           </div>
 
@@ -1623,12 +1760,12 @@ useEffect(() => {
               <button
                 onClick={handlePreserveExtension}
                 className={`flex-1 text-xs py-2.5 px-2 rounded-xl border font-medium transition-all ${
-                  preserveExtension
+                  !preserveExtension
                     ? 'bg-blue-600 border-blue-600 text-white shadow-lg'
                     : theme === 'dark' ? 'bg-slate-800 border-slate-700 text-slate-400' : 'bg-white border-slate-300 text-slate-600'
                 }`}
               >
-                {preserveExtension ? "Don't Change: ON" : "Default Filename"}
+                {preserveExtension ? "Default Filename" : "Change Extension"}
               </button>
               <select
                 value={csvExtension}
@@ -1846,8 +1983,8 @@ useEffect(() => {
                   >
                     <Upload size={48} className="text-blue-500 animate-bounce mb-4" />
                     <p className={`text-lg font-medium mb-1 ${theme === 'dark' ? 'text-slate-300' : 'text-slate-600'}`}>Drop Images or Videos here</p>
-                    <p className="text-sm text-slate-500 font-medium mb-4 hover:underline">Click to browse on your PC</p>
-                    <p className="text-[12px] text-white/80 font-medium mb-4">Important: Upload at least 3 images per batch and Keep Disable Auto Generate Button to maximize your API key value.</p>
+                    <p className="text-sm text-indigo-500 font-medium mb-4 hover:underline">Click to browse on your PC</p>
+                    
                     <div className={`text-xs text-center max-w-sm leading-relaxed ${theme === 'dark' ? 'text-slate-500' : 'text-slate-500'}`}>
                       <p className="font-semibold mb-1 uppercase tracking-wider text-slate-400">Supported Formats</p>
                       <p>
@@ -2155,6 +2292,9 @@ useEffect(() => {
                               <span title="Mid Tail (2-3)" className="px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20">M: {activeFile.keywordAnalysis.mid}</span>
                               <span title="Long Tail (4+)" className="px-1.5 py-0.5 rounded bg-pink-500/10 text-pink-400 border border-pink-500/20">L: {activeFile.keywordAnalysis.long}</span>
                             </div>
+                            <span className={`text-xs font-bold ${activeFile.keywordAnalysis.total > TARGET_KEYWORD_COUNT ? 'text-red-400' : 'text-slate-400'}`}>
+                              {activeFile.keywordAnalysis.total}
+                            </span>
                             <button onClick={() => copyToClipboard(activeFile.metadata.keywords)} className="text-slate-500 hover:text-white"><Copy size={14}/></button>
                           </div>
                         </div>
