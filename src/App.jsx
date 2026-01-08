@@ -754,219 +754,236 @@ const App = () => {
 
     try {
         let parsedResult;
+        let attempt = 0;
+        let isValidResult = false;
+        
+        // --- RETRY LOOP FOR QUALITY ASSURANCE ---
+        while (attempt < 3 && !isValidResult) {
+            attempt++;
+            
+            // Adjust prompt aggressiveness based on attempt
+            const isRetry = attempt > 1;
+            const strictnessPrefix = isRetry ? "PREVIOUS ATTEMPT FAILED. TITLE WAS TOO SHORT OR KEYWORDS TOO FEW. YOU MUST WRITE MORE. " : "";
 
-        if (USE_BACKEND) {
-            const response = await fetch('/api/generate', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    apiKey: activeKey,
-                    assets: validAssets,
-                    modelProvider: aiModel,
-                    maxTitleLength: maxTitleLength, // Pass config to backend
-                    targetKeywordCount: targetKeywordCount // Pass config to backend
-                }),
-                signal: controller.signal
-            });
-
-            if (!response.ok) {
-                let errorMsg = `API Error: ${response.status} ${response.statusText}`;
-                try {
-                    const errorData = await response.json();
-                    if (errorData.error) errorMsg = `API Error: ${JSON.stringify(errorData.error)}`;
-                } catch (e) {}
-                
-                if (response.status === 404) {
-                    errorMsg = "Backend endpoint /api/generate not found. (If testing in Canvas, set USE_BACKEND = false)";
-                }
-                throw new Error(errorMsg);
-            }
-            parsedResult = await response.json();
-        } else {
-            const categoriesString = ADOBE_CATEGORIES.map(c => `${c.id}. ${c.name}`).join('\n');
-            // Strict prompt client-side
-            const systemPromptText = `
-              You are Hacky MetaGen 3.9, a senior SEO expert for Adobe Stock.
-              You are processing a batch of ${validAssets.length} distinct assets.
-              YOUR GOAL: Generate metadata for EACH of the ${validAssets.length} input assets.
-              STRICT RULES FOR EACH ASSET:
-              1. **TITLE**:
-                 - **RULE 1: FORMULA**: [Main Subject] + [Specific Type] + [Action] + [Location/Mood]
-                   Example: "Golden retriever playing happily in sunny park"
-                 - **RULE 2: LENGTH**: Strictly ${MIN_TITLE_LENGTH}-${maxTitleLength} characters.
-                   - **TARGET**: Aim for exactly 65-70 characters.
-                   - **CRITICAL**: Do NOT generate titles shorter than ${MIN_TITLE_LENGTH} characters.
-                   - **CRITICAL**: Do NOT generate titles longer than ${maxTitleLength} characters.
-                 - **RULE 3: 5 QUESTIONS**: Answer: ✓ WHAT? ✓ WHO? ✓ ACTION? ✓ WHERE? ✓ MOOD?
-                 - **RULE 4: FRONT-LOAD**:
-                   Position 1-2 = 35% ranking weight (CRITICAL)
-                   Position 3-4 = 25% ranking weight (IMPORTANT)
-                   Position 5+ = 40% ranking weight (SUPPORTING)
-                 - **RULE 5: FORBIDDEN TERMS**:
-                   ✗ No brands (Apple, Canon, Nike)
-                   ✗ No specs (4K, 12MP, resolution)
-                   ✗ No personal names (John, Sarah, celebrities)
-                   ✗ Not alphabetically ordered
-                 - **CRITICAL**: Do NOT add a period (.) at the end of the title.
-              2. **Keywords**: Generate EXACTLY ${targetKeywordCount} keywords. 
-                 - **FORMAT**: Comma-separated string ONLY. No numbered lists. No bullet points.
-                 - **CRITICAL**: Do NOT generate more than or less than ${targetKeywordCount} keywords. Stop exactly at ${targetKeywordCount}.
-                 - **Priority:** First 10 keywords must be most relevant, most impactful...
-                 This primarily determines search ranking.
-                 - **Distribution:** Short-tail (1-2 words): ~30%, Mid-tail (2-3 words): ~45%, Long-tail (3-4 words): ~25%.
-                 - **Content:** NO brand names, trademarks, or personal names.
-              3. **Category**: Choose the single most appropriate category ID (1-21) from the list below:
-              ${categoriesString}
-              4. **Approval Prediction**: Status ("Accepted" or "Rejected") and Reason.
-                 - **MANDATORY ANATOMY MATH CHECK**:
-                   1. **Count People**: X = Total number of people visible.
-                   2. **Count Hands**: Y = Total number of hands visible.
-                   3. **THE RULE**: If Y > (X * 2), REJECT IMMEDIATELY. (e.g. 2 people cannot have 5 hands).
-                   4. **Finger Count**: Inspect each hand. If != 5 fingers, REJECT.
-                   5. **Limb Logic**: If arms/legs bend in impossible ways or disappear, REJECT.
-                 - **Reason**: If rejected, state specific count error (e.g., "Rejected: Anatomy Math - Found 5 hands for 2 people").
-
-              OUTPUT FORMAT (JSON ARRAY ONLY):
-              Return a JSON Array containing exactly ${validAssets.length} objects.
-              [
-                {
-                  "title": "string",
-                  "keywords": "string (comma separated)",
-                  "category_id": integer,
-                  "approval_status": "Accepted" or "Rejected",
-                  "approval_reason": "string"
-                },
-                ...
-              ]
-            `;
-
-            if (aiModel === 'groq' || aiModel === 'chatgpt') {
-                const endpoint = aiModel === 'chatgpt' ? OPENAI_API_URL : GROQ_API_URL;
-                // Use the constant Groq model now
-                const modelName = aiModel === 'chatgpt' ? OPENAI_MODEL : GROQ_MODEL;
-
-                // --- FIX: Handle Text-Only Models on Groq to prevent 400 Error ---
-                // Treat 'vision' and 'scout' as multimodal/vision models
-                const isTextOnly = aiModel === 'groq' && !modelName.includes('vision') && !modelName.includes('scout'); 
-                
-                const messages = [
-                    { role: "system", content: systemPromptText },
-                    { role: "user", content: isTextOnly ? "" : [] } // Initialize as string for text-only, array for vision
-                ];
-
-                validAssets.forEach((asset, index) => {
-                    const assetText = `\n\n--- INPUT ASSET ${index + 1} ---`;
-                    
-                    if (isTextOnly) {
-                        // For text-only models, append string content directly
-                        messages[1].content += assetText;
-                        messages[1].content += "\n[IMAGE DATA SKIPPED - MODEL IS TEXT ONLY]";
-                    } else {
-                        // For vision models, push objects to array
-                        messages[1].content.push({ type: "text", text: assetText });
-                        if (asset.isVideo && Array.isArray(asset.data)) {
-                            asset.data.forEach(frameData => {
-                                 messages[1].content.push({ type: "image_url", image_url: { url: `data:image/jpeg;base64,${frameData}` } });
-                            });
-                        } else {
-                              messages[1].content.push({ type: "image_url", image_url: { url: `data:${asset.mimeType};base64,${asset.data}` } });
-                        }
-                    }
-                });
-                // ------------------------------------------------------------------
-
-                const response = await fetch(endpoint, {
-                    method: 'POST',
-                    headers: { 'Authorization': `Bearer ${activeKey}`, 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ model: modelName, messages: messages, temperature: 0.7, max_tokens: 4096, response_format: { type: "json_object" } }),
-                    signal: controller.signal
-                });
-
-                if (!response.ok) {
-                    let errorMsg = `${aiModel === 'chatgpt' ? 'OpenAI' : 'Groq'} API Error: ${response.status}`;
-                    try { const err = await response.json(); errorMsg += ` - ${JSON.stringify(err)}`; } catch(e){}
-                    throw new Error(errorMsg);
-                }
-                const data = await response.json();
-                let resultText = data.choices[0].message.content;
-                // Improved regex to strip markdown blocks more reliably (case insensitive, various spacing)
-                resultText = resultText.replace(/```[a-z]*\s*/gi, '').replace(/```/g, '').trim();
-                let rawParse = JSON.parse(resultText);
-                
-                // --- ROBUST JSON NORMALIZATION START ---
-                // Helper to lowercase keys (e.g. Title -> title)
-                const normalizeItem = (item) => {
-                    if (!item || typeof item !== 'object') return item;
-                    const newItem = {};
-                    Object.keys(item).forEach(k => newItem[k.toLowerCase()] = item[k]);
-                    return newItem;
-                };
-
-                if (Array.isArray(rawParse)) {
-                    parsedResult = rawParse.map(normalizeItem);
-                } else if (typeof rawParse === 'object') {
-                    // Check if the model wrapped the array in a key like { "data": [...] }
-                    const arrayVal = Object.values(rawParse).find(v => Array.isArray(v));
-                    if (arrayVal) {
-                        parsedResult = arrayVal.map(normalizeItem);
-                    } else {
-                        // Treat as single object response
-                        parsedResult = [normalizeItem(rawParse)];
-                    }
-                } else {
-                    throw new Error(`Unexpected JSON format from ${aiModel}`);
-                }
-                // --- ROBUST JSON NORMALIZATION END ---
-
-            } else {
-                // Gemini Logic
-                const contentParts = [{ text: systemPromptText }];
-                validAssets.forEach((asset, index) => {
-                    contentParts.push({ text: `\n\n--- INPUT ASSET ${index + 1} ---` });
-                    if (asset.isVideo && Array.isArray(asset.data)) {
-                        asset.data.forEach(frameData => {
-                            contentParts.push({ inlineData: { mimeType: asset.mimeType, data: frameData } });
-                        });
-                    } else {
-                        contentParts.push({ inlineData: { mimeType: asset.mimeType, data: asset.data } });
-                    }
-                });
-                const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${activeKey}`, {
+            if (USE_BACKEND) {
+                // ... (Backend logic omitted for brevity as it follows similar pattern or relies on server) ...
+                 const response = await fetch('/api/generate', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ contents: [{ role: "user", parts: contentParts }], generationConfig: { responseMimeType: "application/json" } }),
+                    body: JSON.stringify({
+                        apiKey: activeKey,
+                        assets: validAssets,
+                        modelProvider: aiModel,
+                        maxTitleLength: maxTitleLength,
+                        targetKeywordCount: targetKeywordCount
+                    }),
                     signal: controller.signal
                 });
-                if (!response.ok) {
-                    let errorMsg = `API Error: ${response.status} ${response.statusText}`;
-                    try { const errorData = await response.json(); if (errorData.error) errorMsg = `API Error: ${JSON.stringify(errorData.error)}`; } catch (e) {}
-                    throw new Error(errorMsg);
-                }
-                const data = await response.json();
-                let resultText = data.candidates[0].content.parts[0].text;
-                resultText = resultText.replace(/```[a-z]*\s*/gi, '').replace(/```/g, '').trim();
-                let rawParse = JSON.parse(resultText);
+                if (!response.ok) throw new Error("Backend Error");
+                parsedResult = await response.json();
+                isValidResult = true; // Assume backend handles validation or we accept it
+            } else {
+                const categoriesString = ADOBE_CATEGORIES.map(c => `${c.id}. ${c.name}`).join('\n');
+                // Strict prompt client-side
+                const systemPromptText = `
+                ${strictnessPrefix}
+                You are Hacky MetaGen 3.9, a senior SEO expert for Adobe Stock.
+                You are processing a batch of ${validAssets.length} distinct assets.
+                YOUR GOAL: Generate metadata for EACH of the ${validAssets.length} input assets.
+                STRICT RULES FOR EACH ASSET:
+                1. **TITLE**:
+                    - **RULE 1: FORMULA**: [Main Subject] + [Specific Type] + [Action] + [Location/Mood]
+                    Example: "Golden retriever playing happily in sunny park"
+                    - **RULE 2: LENGTH**: Strictly ${MIN_TITLE_LENGTH}-${maxTitleLength} characters.
+                    - **TARGET**: Aim for exactly 65-70 characters.
+                    - **CRITICAL**: Do NOT generate titles shorter than ${MIN_TITLE_LENGTH} characters. If short, add visual details (colors, lighting, background).
+                    - **CRITICAL**: Do NOT generate titles longer than ${maxTitleLength} characters.
+                    - **RULE 3: 5 QUESTIONS**: Answer: ✓ WHAT? ✓ WHO? ✓ ACTION? ✓ WHERE? ✓ MOOD?
+                    - **RULE 4: FRONT-LOAD**:
+                    Position 1-2 = 35% ranking weight (CRITICAL)
+                    Position 3-4 = 25% ranking weight (IMPORTANT)
+                    Position 5+ = 40% ranking weight (SUPPORTING)
+                    - **RULE 5: FORBIDDEN TERMS**:
+                    ✗ No brands (Apple, Canon, Nike)
+                    ✗ No specs (4K, 12MP, resolution)
+                    ✗ No personal names (John, Sarah, celebrities)
+                    ✗ Not alphabetically ordered
+                    - **CRITICAL**: Do NOT add a period (.) at the end of the title.
+                2. **Keywords**: Generate 60 keywords. (We will select the best ${targetKeywordCount}).
+                    - **MANDATORY COUNT**: You MUST provide at least 60 keywords. Do NOT stop at 30 or 40.
+                    - **CRITICAL**: Providing fewer than 50 keywords is a FAILURE. Over-generate synonyms and concepts.
+                    - **EXPANSION STRATEGY**: To reach 60, you must include:
+                    1. **Visuals**: (e.g., dog, grass, clouds, fur)
+                    2. **Concepts**: (e.g., friendship, loyalty, freedom, vitality)
+                    3. **Actions**: (e.g., running, playing, jumping, panting)
+                    4. **Mood/Style**: (e.g., happy, sunny, vibrant, cinematic, bokeh)
+                    5. **Broad Categories**: (e.g., mammal, animal, pet, canine, vertebrate)
+                    - **FORMAT**: Comma-separated string ONLY. No numbered lists. No bullet points.
+                3. **Category**: Choose the single most appropriate category ID (1-21) from the list below:
+                ${categoriesString}
+                4. **Approval Prediction**: Status ("Accepted" or "Rejected") and Reason.
+                    - **MANDATORY ANATOMY MATH CHECK**:
+                    1. **Count People**: X = Total number of people visible.
+                    2. **Count Hands**: Y = Total number of hands visible.
+                    3. **THE RULE**: If Y > (X * 2), REJECT IMMEDIATELY. (e.g. 2 people cannot have 5 hands).
+                    4. **Finger Count**: Inspect each hand. If != 5 fingers, REJECT.
+                    5. **Limb Logic**: If arms/legs bend in impossible ways or disappear, REJECT.
+                    - **Reason**: If rejected, state specific count error (e.g., "Rejected: Anatomy Math - Found 5 hands for 2 people").
 
-                // Apply same normalization for Gemini results
-                const normalizeItem = (item) => {
-                    if (!item || typeof item !== 'object') return item;
-                    const newItem = {};
-                    Object.keys(item).forEach(k => newItem[k.toLowerCase()] = item[k]);
-                    return newItem;
-                };
+                OUTPUT FORMAT (JSON ARRAY ONLY):
+                Return a JSON Array containing exactly ${validAssets.length} objects.
+                [
+                    {
+                    "title": "string",
+                    "keywords": "string (comma separated)",
+                    "category_id": integer,
+                    "approval_status": "Accepted" or "Rejected",
+                    "approval_reason": "string"
+                    },
+                    ...
+                ]
+                `;
 
-                if (Array.isArray(rawParse)) {
-                    parsedResult = rawParse.map(normalizeItem);
-                } else if (typeof rawParse === 'object') {
-                     const arrayVal = Object.values(rawParse).find(v => Array.isArray(v));
-                     if (arrayVal) parsedResult = arrayVal.map(normalizeItem);
-                     else parsedResult = [normalizeItem(rawParse)];
+                if (aiModel === 'groq' || aiModel === 'chatgpt') {
+                    const endpoint = aiModel === 'chatgpt' ? OPENAI_API_URL : GROQ_API_URL;
+                    const modelName = aiModel === 'chatgpt' ? OPENAI_MODEL : GROQ_MODEL;
+                    const isTextOnly = aiModel === 'groq' && !modelName.includes('vision') && !modelName.includes('scout'); 
+                    
+                    const messages = [
+                        { role: "system", content: systemPromptText },
+                        { role: "user", content: isTextOnly ? "" : [] }
+                    ];
+
+                    validAssets.forEach((asset, index) => {
+                        const assetText = `\n\n--- INPUT ASSET ${index + 1} ---`;
+                        if (isTextOnly) {
+                            messages[1].content += assetText;
+                            messages[1].content += "\n[IMAGE DATA SKIPPED - MODEL IS TEXT ONLY]";
+                        } else {
+                            messages[1].content.push({ type: "text", text: assetText });
+                            if (asset.isVideo && Array.isArray(asset.data)) {
+                                asset.data.forEach(frameData => {
+                                    messages[1].content.push({ type: "image_url", image_url: { url: `data:image/jpeg;base64,${frameData}` } });
+                                });
+                            } else {
+                                messages[1].content.push({ type: "image_url", image_url: { url: `data:${asset.mimeType};base64,${asset.data}` } });
+                            }
+                        }
+                    });
+
+                    const response = await fetch(endpoint, {
+                        method: 'POST',
+                        headers: { 'Authorization': `Bearer ${activeKey}`, 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ model: modelName, messages: messages, temperature: 0.7, max_tokens: 4096, response_format: { type: "json_object" } }),
+                        signal: controller.signal
+                    });
+
+                    if (!response.ok) {
+                        let errorMsg = `${aiModel === 'chatgpt' ? 'OpenAI' : 'Groq'} API Error: ${response.status}`;
+                        try { const err = await response.json(); errorMsg += ` - ${JSON.stringify(err)}`; } catch(e){}
+                        throw new Error(errorMsg);
+                    }
+                    const data = await response.json();
+                    let resultText = data.choices[0].message.content;
+                    resultText = resultText.replace(/```[a-z]*\s*/gi, '').replace(/```/g, '').trim();
+                    let rawParse = JSON.parse(resultText);
+                    
+                    const normalizeItem = (item) => {
+                        if (!item || typeof item !== 'object') return item;
+                        const newItem = {};
+                        Object.keys(item).forEach(k => newItem[k.toLowerCase()] = item[k]);
+                        return newItem;
+                    };
+
+                    if (Array.isArray(rawParse)) {
+                        parsedResult = rawParse.map(normalizeItem);
+                    } else if (typeof rawParse === 'object') {
+                        const arrayVal = Object.values(rawParse).find(v => Array.isArray(v));
+                        if (arrayVal) parsedResult = arrayVal.map(normalizeItem);
+                        else parsedResult = [normalizeItem(rawParse)];
+                    } else {
+                        throw new Error(`Unexpected JSON format from ${aiModel}`);
+                    }
+
+                } else {
+                    // Gemini Logic
+                    const contentParts = [{ text: systemPromptText }];
+                    validAssets.forEach((asset, index) => {
+                        contentParts.push({ text: `\n\n--- INPUT ASSET ${index + 1} ---` });
+                        if (asset.isVideo && Array.isArray(asset.data)) {
+                            asset.data.forEach(frameData => {
+                                contentParts.push({ inlineData: { mimeType: asset.mimeType, data: frameData } });
+                            });
+                        } else {
+                            contentParts.push({ inlineData: { mimeType: asset.mimeType, data: asset.data } });
+                        }
+                    });
+                    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${activeKey}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ contents: [{ role: "user", parts: contentParts }], generationConfig: { responseMimeType: "application/json" } }),
+                        signal: controller.signal
+                    });
+                    if (!response.ok) {
+                        let errorMsg = `API Error: ${response.status} ${response.statusText}`;
+                        try { const errorData = await response.json(); if (errorData.error) errorMsg = `API Error: ${JSON.stringify(errorData.error)}`; } catch (e) {}
+                        throw new Error(errorMsg);
+                    }
+                    const data = await response.json();
+                    let resultText = data.candidates[0].content.parts[0].text;
+                    resultText = resultText.replace(/```[a-z]*\s*/gi, '').replace(/```/g, '').trim();
+                    let rawParse = JSON.parse(resultText);
+
+                    const normalizeItem = (item) => {
+                        if (!item || typeof item !== 'object') return item;
+                        const newItem = {};
+                        Object.keys(item).forEach(k => newItem[k.toLowerCase()] = item[k]);
+                        return newItem;
+                    };
+
+                    if (Array.isArray(rawParse)) {
+                        parsedResult = rawParse.map(normalizeItem);
+                    } else if (typeof rawParse === 'object') {
+                        const arrayVal = Object.values(rawParse).find(v => Array.isArray(v));
+                        if (arrayVal) parsedResult = arrayVal.map(normalizeItem);
+                        else parsedResult = [normalizeItem(rawParse)];
+                    }
                 }
             }
+            
+            // --- VALIDATION CHECK ---
+            if (Array.isArray(parsedResult) && parsedResult.length === validAssets.length) {
+                let allPassed = true;
+                for (const res of parsedResult) {
+                    // Check Title Length
+                    const titleLen = res.title ? res.title.trim().length : 0;
+                    if (titleLen < MIN_TITLE_LENGTH) {
+                        console.warn(`Attempt ${attempt}: Title too short (${titleLen} chars). Retrying...`);
+                        allPassed = false;
+                        break;
+                    }
+                    
+                    // Check Keyword Count
+                    const kwString = res.keywords || "";
+                    // Count roughly by splitting commas
+                    const kwCount = kwString.split(/[,;]+/).filter(k => k.trim().length > 0).length;
+                    if (kwCount < 35) { // Set a "safe" lower bound for retry logic (35 is acceptable to fail over to fallback padding)
+                         console.warn(`Attempt ${attempt}: Keywords too few (${kwCount}). Retrying...`);
+                         allPassed = false;
+                         break;
+                    }
+                }
+                if (allPassed) {
+                    isValidResult = true;
+                }
+            } else {
+                console.warn(`Attempt ${attempt}: Invalid result structure. Retrying...`);
+            }
         }
-        
+        // -------------------------
+
         if (!Array.isArray(parsedResult)) {
-             throw new Error("AI response could not be parsed into a list of assets.");
+             throw new Error("AI response could not be parsed into a list of assets after multiple attempts.");
         }
 
         const finalResults = {};
