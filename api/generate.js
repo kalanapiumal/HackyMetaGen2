@@ -1,12 +1,12 @@
 /**
  * Serverless function to handle AI metadata generation
- * Supports: Gemini, Groq, and OpenAI (ChatGPT)
+ * Supports: Gemini, Groq (Llama 4 Scout), and OpenAI (ChatGPT)
  */
 
 export const config = {
   api: {
     bodyParser: {
-      sizeLimit: '10mb', // Increase limit for image uploads
+      sizeLimit: '10mb', // Allow larger payloads for images
     },
   },
 };
@@ -37,26 +37,72 @@ const ADOBE_CATEGORIES = [
 
 const CATEGORIES_STRING = ADOBE_CATEGORIES.map(c => `${c.id}. ${c.name}`).join('\n');
 
-const SYSTEM_PROMPT = `
-You are Hacky MetaGen 3.9, a senior SEO expert for Adobe Stock.
-You are processing a batch of assets.
+// Constants for Prompt Construction
+const MIN_TITLE_LENGTH = 40;
 
-YOUR GOAL: Generate metadata for EACH input asset provided.
+export default async function handler(req, res) {
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method Not Allowed' });
+  }
+
+  const { apiKey, assets, modelProvider, maxTitleLength = 70, targetKeywordCount = 49 } = req.body;
+
+  if (!apiKey) {
+    return res.status(400).json({ error: 'API Key is required' });
+  }
+
+  if (!assets || !Array.isArray(assets) || assets.length === 0) {
+    return res.status(400).json({ error: 'No assets provided' });
+  }
+
+  // UPDATED PROMPT: Matches the latest frontend strict rules
+  const SYSTEM_PROMPT = `
+You are Hacky MetaGen 3.9, a senior SEO expert for Adobe Stock.
+You are processing a batch of ${assets.length} distinct assets.
+YOUR GOAL: Generate metadata for EACH of the ${assets.length} input assets.
 
 STRICT RULES FOR EACH ASSET:
-1. **Title**: EXACTLY 100-120 characters. Natural, readable, descriptive. Include high-value keywords. NO keyword stuffing.
-2. **Keywords**: Generate EXACTLY 49 keywords. Comma-separated string.
-   - **CRITICAL:** Do NOT generate more than or less than 49 keywords. Stop exactly at 49.
-   - **Priority:** First 5-10 keywords must be most relevant, most impactful...
-   This primarily determines search ranking.
-   - **Distribution:** Short-tail (1-2 words): ~30%, Mid-tail (2-3 words): ~45%, Long-tail (3-4 words): ~25%.
-   - **Content:** NO brand names, trademarks, or personal names.
+1. **TITLE**:
+   - **RULE 1: FORMULA**: [Main Subject] + [Specific Type] + [Action] + [Location/Mood]
+     Example: "Golden retriever playing happily in sunny park"
+   - **RULE 2: LENGTH**: Strictly ${MIN_TITLE_LENGTH}-${maxTitleLength} characters.
+     - **TARGET**: Aim for exactly 65-70 characters.
+     - **CRITICAL**: Do NOT generate titles shorter than ${MIN_TITLE_LENGTH} characters.
+     - **CRITICAL**: Do NOT generate titles longer than ${maxTitleLength} characters.
+   - **RULE 3: 5 QUESTIONS**: Answer: ✓ WHAT? ✓ WHO? ✓ ACTION? ✓ WHERE? ✓ MOOD?
+   - **RULE 4: FRONT-LOAD**:
+     Position 1-2 = 35% ranking weight (CRITICAL)
+     Position 3-4 = 25% ranking weight (IMPORTANT)
+     Position 5+ = 40% ranking weight (SUPPORTING)
+   - **RULE 5: FORBIDDEN TERMS**:
+     ✗ No brands (Apple, Canon, Nike)
+     ✗ No specs (4K, 12MP, resolution)
+     ✗ No personal names (John, Sarah, celebrities)
+     ✗ Not alphabetically ordered
+   - **CRITICAL**: Do NOT add a period (.) at the end of the title.
+2. **Keywords**: Generate 60 keywords. (We will select the best ${targetKeywordCount}).
+   - **MANDATORY COUNT**: You MUST provide at least 60 keywords. Do NOT stop at 30 or 40.
+   - **CRITICAL**: Providing fewer than 50 keywords is a FAILURE. Over-generate synonyms and concepts.
+   - **EXPANSION STRATEGY**: To reach 60, you must include:
+     1. **Visuals**: (e.g., dog, grass, clouds, fur)
+     2. **Concepts**: (e.g., friendship, loyalty, freedom, vitality)
+     3. **Actions**: (e.g., running, playing, jumping, panting)
+     4. **Mood/Style**: (e.g., happy, sunny, vibrant, cinematic, bokeh)
+     5. **Broad Categories**: (e.g., mammal, animal, pet, canine, vertebrate)
+   - **FORMAT**: Comma-separated string ONLY. No numbered lists. No bullet points.
 3. **Category**: Choose the single most appropriate category ID (1-21) from the list below:
 ${CATEGORIES_STRING}
 4. **Approval Prediction**: Status ("Accepted" or "Rejected") and Reason.
+   - **MANDATORY ANATOMY MATH CHECK**:
+     1. **Count People**: X = Total number of people visible.
+     2. **Count Hands**: Y = Total number of hands visible.
+     3. **THE RULE**: If Y > (X * 2), REJECT IMMEDIATELY. (e.g. 2 people cannot have 5 hands).
+     4. **Finger Count**: Inspect each hand. If != 5 fingers, REJECT.
+     5. **Limb Logic**: If arms/legs bend in impossible ways or disappear, REJECT.
+   - **Reason**: If rejected, state specific count error (e.g., "Rejected: Anatomy Math - Found 5 hands for 2 people").
 
 OUTPUT FORMAT (JSON ARRAY ONLY):
-Return a JSON Array containing objects matching the number of input assets.
+Return a JSON Array containing exactly ${assets.length} objects.
 [
   {
     "title": "string",
@@ -69,21 +115,6 @@ Return a JSON Array containing objects matching the number of input assets.
 ]
 `;
 
-export default async function handler(req, res) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method Not Allowed' });
-  }
-
-  const { apiKey, assets, modelProvider } = req.body;
-
-  if (!apiKey) {
-    return res.status(400).json({ error: 'API Key is required' });
-  }
-
-  if (!assets || !Array.isArray(assets) || assets.length === 0) {
-    return res.status(400).json({ error: 'No assets provided' });
-  }
-
   try {
     let result;
 
@@ -92,27 +123,59 @@ export default async function handler(req, res) {
         apiKey, 
         assets, 
         "https://api.groq.com/openai/v1/chat/completions",
-        "meta-llama/llama-4-scout-17b-16e-instruct" 
+        "meta-llama/llama-4-scout-17b-16e-instruct", // Fixed model for Groq
+        SYSTEM_PROMPT
       );
     } else if (modelProvider === 'chatgpt') {
       result = await handleOpenAIStyleRequest(
         apiKey,
         assets,
         "https://api.openai.com/v1/chat/completions",
-        "gpt-4o-mini"
+        "gpt-4o",
+        SYSTEM_PROMPT
       );
     } else {
       // Default to Gemini
-      result = await handleGeminiRequest(apiKey, assets);
+      result = await handleGeminiRequest(apiKey, assets, SYSTEM_PROMPT);
+    }
+
+    // --- Backend Post-Processing/Sanitization ---
+    // This mirrors the frontend safety checks to ensure the API returns clean data
+    if (Array.isArray(result)) {
+        result = result.map(item => {
+            // Normalize keys (lowercase)
+            const newItem = {};
+            Object.keys(item).forEach(k => newItem[k.toLowerCase()] = item[k]);
+
+            // Truncate Title if needed
+            if (newItem.title) {
+                let t = String(newItem.title).trim();
+                if (t.endsWith('.')) t = t.slice(0, -1);
+                if (t.length > maxTitleLength) {
+                    const truncated = t.substring(0, maxTitleLength);
+                    const lastSpace = truncated.lastIndexOf(' ');
+                    if (lastSpace > 0) t = truncated.substring(0, lastSpace);
+                    else t = truncated;
+                }
+                newItem.title = t;
+            }
+
+            // Truncate Keywords if needed
+            if (newItem.keywords && typeof newItem.keywords === 'string') {
+                const splitRegex = /[,;\n\r]+/;
+                let kws = newItem.keywords.split(splitRegex).map(k => k.trim()).filter(k => k.length > 0);
+                if (kws.length > targetKeywordCount) kws = kws.slice(0, targetKeywordCount);
+                newItem.keywords = kws.join(', ');
+            }
+            return newItem;
+        });
     }
 
     return res.status(200).json(result);
 
   } catch (error) {
     console.error("Backend Generation Error:", error);
-    // Attempt to extract meaningful error message
     const errorMessage = error.message || "Internal Server Error";
-    // Check for specific status codes in the error if available
     const status = error.status || 500;
     return res.status(status).json({ error: errorMessage });
   }
@@ -120,19 +183,18 @@ export default async function handler(req, res) {
 
 // --- HANDLERS ---
 
-async function handleGeminiRequest(apiKey, assets) {
-  const contentParts = [{ text: SYSTEM_PROMPT }];
+async function handleGeminiRequest(apiKey, assets, systemPrompt) {
+  const contentParts = [{ text: systemPrompt }];
 
   assets.forEach((asset, index) => {
     contentParts.push({ text: `\n\n--- INPUT ASSET ${index + 1} ---` });
     
-    // Check if it is a video (array of frames) or single image
     if (Array.isArray(asset.data)) {
       // Video frames
       asset.data.forEach(frameBase64 => {
         contentParts.push({
           inlineData: {
-            mimeType: "image/jpeg", // Frames are usually extracted as JPEG
+            mimeType: "image/jpeg",
             data: frameBase64
           }
         });
@@ -164,7 +226,9 @@ async function handleGeminiRequest(apiKey, assets) {
 
   if (!response.ok) {
     const errText = await response.text();
-    throw new Error(`Gemini API Error ${response.status}: ${errText}`);
+    const error = new Error(`Gemini API Error ${response.status}: ${errText}`);
+    error.status = response.status;
+    throw error;
   }
 
   const data = await response.json();
@@ -175,23 +239,19 @@ async function handleGeminiRequest(apiKey, assets) {
   return parseJSONSafely(text);
 }
 
-async function handleOpenAIStyleRequest(apiKey, assets, endpoint, model) {
+async function handleOpenAIStyleRequest(apiKey, assets, endpoint, model, systemPrompt) {
   const messages = [
-    {
-        role: "user",
-        content: [
-            { type: "text", text: SYSTEM_PROMPT }
-        ]
-    }
+    { role: "system", content: systemPrompt },
+    { role: "user", content: [] }
   ];
 
   assets.forEach((asset, index) => {
-    messages[0].content.push({ type: "text", text: `\n\n--- INPUT ASSET ${index + 1} ---` });
+    messages[1].content.push({ type: "text", text: `\n\n--- INPUT ASSET ${index + 1} ---` });
     
     if (Array.isArray(asset.data)) {
       // Video Frames
       asset.data.forEach(frameBase64 => {
-        messages[0].content.push({
+        messages[1].content.push({
           type: "image_url",
           image_url: {
             url: `data:image/jpeg;base64,${frameBase64}`
@@ -200,9 +260,8 @@ async function handleOpenAIStyleRequest(apiKey, assets, endpoint, model) {
       });
     } else {
       // Single Image
-      // Ensure we have a valid mime type for the data URI
       const mime = asset.mimeType || "image/jpeg";
-      messages[0].content.push({
+      messages[1].content.push({
         type: "image_url",
         image_url: {
           url: `data:${mime};base64,${asset.data}`
@@ -228,7 +287,9 @@ async function handleOpenAIStyleRequest(apiKey, assets, endpoint, model) {
 
   if (!response.ok) {
     const errText = await response.text();
-    throw new Error(`API Error ${response.status} (${model}): ${errText}`);
+    const error = new Error(`API Error ${response.status} (${model}): ${errText}`);
+    error.status = response.status;
+    throw error;
   }
 
   const data = await response.json();
@@ -242,7 +303,7 @@ async function handleOpenAIStyleRequest(apiKey, assets, endpoint, model) {
 function parseJSONSafely(text) {
   try {
     // Clean up markdown code blocks if present
-    const cleaned = text.replace(/```json/g, '').replace(/```/g, '').trim();
+    const cleaned = text.replace(/```[a-z]*\s*/gi, '').replace(/```/g, '').trim();
     const parsed = JSON.parse(cleaned);
 
     // Normalize output: If the model wraps result in an object key like "assets": [], extract the array
