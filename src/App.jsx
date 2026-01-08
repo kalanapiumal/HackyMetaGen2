@@ -60,22 +60,24 @@ const getEnvBool = (key, defaultVal) => {
 
 // --- CONFIGURATION ---
 // 1. MANUAL_CONFIG: Set these to true to force backend usage locally or in specific builds.
-const MANUAL_USE_BACKEND = true; 
-const MANUAL_REQUIRE_USER_API_KEY = true;
+// CHANGED: Set to false for this preview environment to ensure client-side processing works immediately.
+const MANUAL_USE_BACKEND = false; 
+const MANUAL_REQUIRE_USER_API_KEY = false;
 
 // 2. LOGIC: Checks Environment Variable first, then Manual toggle.
 const USE_BACKEND = getEnvBool('NEXT_PUBLIC_USE_BACKEND', false) || MANUAL_USE_BACKEND;
 const REQUIRE_USER_API_KEY = getEnvBool('NEXT_PUBLIC_REQUIRE_USER_API_KEY', false) || MANUAL_REQUIRE_USER_API_KEY;
 
 // --- Constants ---
-const MAX_TITLE_LENGTH = 120;
-const MIN_TITLE_LENGTH = 100; 
+const MAX_TITLE_LENGTH = 70; // Updated to 70 per request
+const MIN_TITLE_LENGTH = 40; 
 const TARGET_KEYWORD_COUNT = 49;
-const BATCH_SIZE = 3; 
+const BATCH_SIZE = 2; // Reduced to 2 to prevent Rate Limiting
 const apiKey = ""; 
 
 // --- API CONSTANTS ---
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
+// UPDATED: Fixed single model for Groq (No selection)
 const GROQ_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct";
 
 const OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
@@ -132,7 +134,7 @@ const LEGAL_CONTENT = {
             <li>Data is transmitted directly from your browser to the Google Gemini API, Groq API, or OpenAI API (depending on selection).</li>
             <li>We <strong>do not</strong> permanently store, save, or claim ownership of your uploaded assets.</li>
         </ul>
-        <p><strong>2. API Keys & Local Storage:</strong> If you provide your own API Keys, they are stored locally in your browser's <code>localStorage</code> on your device. It is not saved to our databases. You retain full control over your key and can delete it at any time by clearing the input field.</p>
+        <p><strong>2. API Keys & Local Storage:</strong> If you provide your own API Keys (Gemini or Groq), they are stored locally in your browser's <code>localStorage</code> on your device. It is not saved to our databases. You retain full control over your key and can delete it at any time by clearing the input field.</p>
         <p><strong>3. Third-Party Data Sharing:</strong> This tool utilizes third-party AI APIs to generate metadata. By using this tool, you acknowledge that your input data (image frames and prompts) is sent to these providers for processing. Please refer to their respective Privacy Policies.</p>
         <p><strong>4. Usage Analytics:</strong> We may collect anonymous, non-identifiable usage statistics (e.g., number of generations) to improve service stability, but this does not include the content of your uploads.</p>
       </div>
@@ -346,6 +348,18 @@ const App = () => {
     return saved !== null ? JSON.parse(saved) : true;
   });
 
+  const [maxTitleLength, setMaxTitleLength] = useState(() => {
+    const saved = localStorage.getItem('hackymetagen_max_title_length');
+    // If saved value is way over our new safe limit for "Best" (e.g. 70 or 80 from before), default to 70.
+    // Otherwise use saved preference.
+    return saved ? Math.min(parseInt(saved, 10), 75) : 70; 
+  });
+
+  const [targetKeywordCount, setTargetKeywordCount] = useState(() => {
+    const saved = localStorage.getItem('hackymetagen_target_keyword_count');
+    return saved ? parseInt(saved, 10) : 49; // Default 49
+  });
+
   const hasNotifiedRef = useRef(false);
   const [selectedFileId, setSelectedFileId] = useState(null);
   const [contentType, setContentType] = useState('image'); 
@@ -356,20 +370,24 @@ const App = () => {
   const [newKeyword, setNewKeyword] = useState('');
   const [draggedIndex, setDraggedIndex] = useState(null);
 
-  const [isAutoGenerate, setIsAutoGenerate] = useState(() => {
-    const saved = localStorage.getItem('hackymetagen_auto_generate');
-    return saved !== null ? JSON.parse(saved) : false;
+  // Default Category State
+  const [defaultCategoryId, setDefaultCategoryId] = useState(() => {
+    const saved = localStorage.getItem('hackymetagen_default_category');
+    return saved ? parseInt(saved, 10) : 8; // Default to 8 (Graphic Resources)
   });
+
+  // Auto Generate defaults to false now and removed from UI, but logic kept safe
+  const [isAutoGenerate, setIsAutoGenerate] = useState(false);
   
   const [useAiCategory, setUseAiCategory] = useState(() => {
     const saved = localStorage.getItem('hackymetagen_use_ai_category');
-    return saved !== null ? JSON.parse(saved) : false;
+    return saved !== null ? JSON.parse(saved) : true; // Default to true (ON)
   });
 
   const [csvExtension, setCsvExtension] = useState(() => localStorage.getItem('hackymetagen_csv_extension') || 'ai');
   const [preserveExtension, setPreserveExtension] = useState(() => {
     const saved = localStorage.getItem('hackymetagen_preserve_extension');
-    return saved !== null ? JSON.parse(saved) : true;
+    return saved !== null ? JSON.parse(saved) : true; // Default to true (ON)
   });
 
   const [defaultKeywords, setDefaultKeywords] = useState('');
@@ -406,6 +424,7 @@ const App = () => {
   const apiKeyRef = useRef(userApiKey); 
   const defaultKeywordsRef = useRef(defaultKeywords);
   const aiModelRef = useRef(aiModel);
+  const defaultCategoryIdRef = useRef(defaultCategoryId);
 
   // Derived State
   const activeFile = files.find(f => f.id === selectedFileId);
@@ -416,13 +435,13 @@ const App = () => {
 
   // Defined as mixed content array using useMemo
   const features = useMemo(() => [
+    {type: 'jsx', content: (<span className="flex items-center gap-2 whitespace-nowrap truncate max-w-full">Chatgpt and Groq Supports<span className="text-[10px] px-1.5 py-0.5 rounded bg-white text-black font-bold uppercase">New</span></span>)},
+    {type: 'jsx', content: (<span className="flex items-center gap-2 whitespace-nowrap truncate max-w-full">Max Title and Keyword count Selection Added<span className="text-[10px] px-1.5 py-0.5 rounded bg-white text-black font-bold uppercase">New</span></span>)},
     {type: 'jsx', content: (<span className="flex items-center gap-2 whitespace-nowrap truncate max-w-full">Custom Keywords (Appended) Supports<span className="text-[10px] px-1.5 py-0.5 rounded bg-white text-black font-bold uppercase">New</span></span>)},
     {type: 'jsx', content: (<span className="flex items-center gap-2 whitespace-nowrap truncate max-w-full">Smart Batch Processing (Quota Saver)<span className="text-[10px] px-1.5 py-0.5 rounded bg-white text-black font-bold uppercase">New</span></span>)},
-    {type: 'jsx', content: (<span className="flex items-center gap-2 whitespace-nowrap truncate max-w-full">Files Statistics Panel<span className="text-[10px] px-1.5 py-0.5 rounded bg-white text-black font-bold uppercase">New</span></span>)},
     {type: 'jsx', content: (<span className="flex items-center gap-2 whitespace-nowrap truncate max-w-full">Notification Sound On Batch Completed<span className="text-[10px] px-1.5 py-0.5 rounded bg-white text-black font-bold uppercase animate-pulse">New</span></span>)},
     {type: 'jsx', content: (<span className="flex items-center gap-2 whitespace-nowrap truncate max-w-full">AI Approval Result Prediction Beta 0.5<span className="text-[10px] px-1.5 py-0.5 rounded bg-white text-black font-bold uppercase animate-pulse">New</span></span>)},
-    { type: 'text', content: " CSV FileName Extension Selection Support" },
-    { type: 'text', content: " Video Metadata Support" }
+    { type: 'text', content: " CSV FileName Extension Selection Support" }
   ], []);
 
   // Effects
@@ -434,6 +453,9 @@ const App = () => {
   useEffect(() => { localStorage.setItem('hackymetagen_preserve_extension', JSON.stringify(preserveExtension)); }, [preserveExtension]);
   useEffect(() => { localStorage.setItem('hackymetagen_keywords_locked', JSON.stringify(isKeywordsLocked)); }, [isKeywordsLocked]);
   useEffect(() => { localStorage.setItem('hackymetagen_ai_model', aiModel); aiModelRef.current = aiModel; }, [aiModel]);
+  useEffect(() => { localStorage.setItem('hackymetagen_max_title_length', maxTitleLength); }, [maxTitleLength]);
+  useEffect(() => { localStorage.setItem('hackymetagen_target_keyword_count', targetKeywordCount); }, [targetKeywordCount]);
+  useEffect(() => { localStorage.setItem('hackymetagen_default_category', defaultCategoryId); defaultCategoryIdRef.current = defaultCategoryId; }, [defaultCategoryId]);
   
   useEffect(() => { csvExtensionRef.current = csvExtension; }, [csvExtension]);
   useEffect(() => { preserveExtensionRef.current = preserveExtension; }, [preserveExtension]);
@@ -524,12 +546,20 @@ const App = () => {
     const newMode = !useAiCategory;
     setUseAiCategory(newMode);
     setFiles(prev => prev.map(f => {
-      let newCategoryId = 8;
+      let newCategoryId = defaultCategoryId;
       if (newMode) {
-        newCategoryId = f.aiCategoryId || 8; 
+        newCategoryId = f.aiCategoryId || defaultCategoryId; 
       }
       return { ...f, categoryId: newCategoryId };
     }));
+  };
+
+  const handleDefaultCategoryChange = (e) => {
+    const newId = parseInt(e.target.value, 10);
+    setDefaultCategoryId(newId);
+    if (!useAiCategory) {
+      setFiles(prev => prev.map(f => ({ ...f, categoryId: newId })));
+    }
   };
 
   const updateFileKeywords = (fileId, newKeywordsString) => {
@@ -594,19 +624,33 @@ const App = () => {
 
   const mergeKeywords = (aiKeywordsStr, specificDefaults = null) => {
     const currentDefaults = specificDefaults !== null ? specificDefaults : defaultKeywordsRef.current;
+    
+    // Robust splitting handles commas, newlines, or semicolons
+    const splitRegex = /[,;\n\r]+/; 
+    
+    // FIX: Guard clause for non-string input
+    const safeAiKeywordsStr = (typeof aiKeywordsStr === 'string') ? aiKeywordsStr : '';
+
     if (!currentDefaults || !currentDefaults.trim()) {
-       let list = aiKeywordsStr.split(',').map(s => s.trim()).filter(s => s);
-       if (list.length > TARGET_KEYWORD_COUNT) {
-           return list.slice(0, TARGET_KEYWORD_COUNT).join(', ');
+       let list = safeAiKeywordsStr.split(splitRegex).map(s => s.trim()).filter(s => s && s.length > 1);
+       // Hard Limit Safety Check
+       if (list.length > targetKeywordCount) {
+           return list.slice(0, targetKeywordCount).join(', ');
        }
-       return aiKeywordsStr;
+       return list.join(', ');
     }
-    const defaultsList = currentDefaults.split(',').map(s => s.trim()).filter(s => s);
-    let aiList = aiKeywordsStr.split(',').map(s => s.trim()).filter(s => s);
-    if (defaultsList.length === 0) return aiKeywordsStr;
-    const maxAiCount = Math.max(0, TARGET_KEYWORD_COUNT - defaultsList.length);
+
+    const defaultsList = currentDefaults.split(splitRegex).map(s => s.trim()).filter(s => s);
+    let aiList = safeAiKeywordsStr.split(splitRegex).map(s => s.trim()).filter(s => s && s.length > 1);
+    
+    if (defaultsList.length === 0) return safeAiKeywordsStr;
+    
+    const maxAiCount = Math.max(0, targetKeywordCount - defaultsList.length);
+    
+    // Intelligent reduction loop
     while (aiList.length > maxAiCount) {
         let indexToRemove = -1;
+        // Try to remove short words first (usually filler)
         for (let i = aiList.length - 1; i >= 0; i--) {
             const wordCount = aiList[i].split(/\s+/).length;
             if (wordCount <= 2) {
@@ -614,12 +658,20 @@ const App = () => {
                 break;
             }
         }
+        // Fallback: Remove from end
         if (indexToRemove === -1) {
             indexToRemove = aiList.length - 1;
         }
         aiList.splice(indexToRemove, 1);
     }
+    
     const combined = [...aiList, ...defaultsList];
+    
+    // Final hard truncate just in case
+    if (combined.length > targetKeywordCount) {
+        return combined.slice(0, targetKeywordCount).join(', ');
+    }
+    
     return combined.join(', ');
   };
 
@@ -710,7 +762,9 @@ const App = () => {
                 body: JSON.stringify({
                     apiKey: activeKey,
                     assets: validAssets,
-                    modelProvider: aiModel
+                    modelProvider: aiModel,
+                    maxTitleLength: maxTitleLength, // Pass config to backend
+                    targetKeywordCount: targetKeywordCount // Pass config to backend
                 }),
                 signal: controller.signal
             });
@@ -730,21 +784,48 @@ const App = () => {
             parsedResult = await response.json();
         } else {
             const categoriesString = ADOBE_CATEGORIES.map(c => `${c.id}. ${c.name}`).join('\n');
+            // Strict prompt client-side
             const systemPromptText = `
               You are Hacky MetaGen 3.9, a senior SEO expert for Adobe Stock.
               You are processing a batch of ${validAssets.length} distinct assets.
               YOUR GOAL: Generate metadata for EACH of the ${validAssets.length} input assets.
               STRICT RULES FOR EACH ASSET:
-              1. **Title**: EXACTLY 100-120 characters. Natural, readable, descriptive. Include high-value keywords. NO keyword stuffing.
-              2. **Keywords**: Generate EXACTLY 49 keywords. Comma-separated string.
-                 - **CRITICAL:** Do NOT generate more than or less than 49 keywords. Stop exactly at 49.
-                 - **Priority:** First 5-10 keywords must be most relevant, most impactful...
+              1. **TITLE**:
+                 - **RULE 1: FORMULA**: [Main Subject] + [Specific Type] + [Action] + [Location/Mood]
+                   Example: "Golden retriever playing happily in sunny park"
+                 - **RULE 2: LENGTH**: Strictly ${MIN_TITLE_LENGTH}-${maxTitleLength} characters.
+                   - **TARGET**: Aim for exactly 65-70 characters.
+                   - **CRITICAL**: Do NOT generate titles shorter than ${MIN_TITLE_LENGTH} characters.
+                   - **CRITICAL**: Do NOT generate titles longer than ${maxTitleLength} characters.
+                 - **RULE 3: 5 QUESTIONS**: Answer: ✓ WHAT? ✓ WHO? ✓ ACTION? ✓ WHERE? ✓ MOOD?
+                 - **RULE 4: FRONT-LOAD**:
+                   Position 1-2 = 35% ranking weight (CRITICAL)
+                   Position 3-4 = 25% ranking weight (IMPORTANT)
+                   Position 5+ = 40% ranking weight (SUPPORTING)
+                 - **RULE 5: FORBIDDEN TERMS**:
+                   ✗ No brands (Apple, Canon, Nike)
+                   ✗ No specs (4K, 12MP, resolution)
+                   ✗ No personal names (John, Sarah, celebrities)
+                   ✗ Not alphabetically ordered
+                 - **CRITICAL**: Do NOT add a period (.) at the end of the title.
+              2. **Keywords**: Generate EXACTLY ${targetKeywordCount} keywords. 
+                 - **FORMAT**: Comma-separated string ONLY. No numbered lists. No bullet points.
+                 - **CRITICAL**: Do NOT generate more than or less than ${targetKeywordCount} keywords. Stop exactly at ${targetKeywordCount}.
+                 - **Priority:** First 10 keywords must be most relevant, most impactful...
                  This primarily determines search ranking.
                  - **Distribution:** Short-tail (1-2 words): ~30%, Mid-tail (2-3 words): ~45%, Long-tail (3-4 words): ~25%.
                  - **Content:** NO brand names, trademarks, or personal names.
               3. **Category**: Choose the single most appropriate category ID (1-21) from the list below:
               ${categoriesString}
               4. **Approval Prediction**: Status ("Accepted" or "Rejected") and Reason.
+                 - **MANDATORY ANATOMY MATH CHECK**:
+                   1. **Count People**: X = Total number of people visible.
+                   2. **Count Hands**: Y = Total number of hands visible.
+                   3. **THE RULE**: If Y > (X * 2), REJECT IMMEDIATELY. (e.g. 2 people cannot have 5 hands).
+                   4. **Finger Count**: Inspect each hand. If != 5 fingers, REJECT.
+                   5. **Limb Logic**: If arms/legs bend in impossible ways or disappear, REJECT.
+                 - **Reason**: If rejected, state specific count error (e.g., "Rejected: Anatomy Math - Found 5 hands for 2 people").
+
               OUTPUT FORMAT (JSON ARRAY ONLY):
               Return a JSON Array containing exactly ${validAssets.length} objects.
               [
@@ -761,21 +842,38 @@ const App = () => {
 
             if (aiModel === 'groq' || aiModel === 'chatgpt') {
                 const endpoint = aiModel === 'chatgpt' ? OPENAI_API_URL : GROQ_API_URL;
+                // Use the constant Groq model now
                 const modelName = aiModel === 'chatgpt' ? OPENAI_MODEL : GROQ_MODEL;
 
+                // --- FIX: Handle Text-Only Models on Groq to prevent 400 Error ---
+                // Treat 'vision' and 'scout' as multimodal/vision models
+                const isTextOnly = aiModel === 'groq' && !modelName.includes('vision') && !modelName.includes('scout'); 
+                
                 const messages = [
-                    { role: "user", content: [{ type: "text", text: systemPromptText }] }
+                    { role: "system", content: systemPromptText },
+                    { role: "user", content: isTextOnly ? "" : [] } // Initialize as string for text-only, array for vision
                 ];
+
                 validAssets.forEach((asset, index) => {
-                    messages[0].content.push({ type: "text", text: `\n\n--- INPUT ASSET ${index + 1} ---` });
-                    if (asset.isVideo && Array.isArray(asset.data)) {
-                        asset.data.forEach(frameData => {
-                             messages[0].content.push({ type: "image_url", image_url: { url: `data:image/jpeg;base64,${frameData}` } });
-                        });
+                    const assetText = `\n\n--- INPUT ASSET ${index + 1} ---`;
+                    
+                    if (isTextOnly) {
+                        // For text-only models, append string content directly
+                        messages[1].content += assetText;
+                        messages[1].content += "\n[IMAGE DATA SKIPPED - MODEL IS TEXT ONLY]";
                     } else {
-                         messages[0].content.push({ type: "image_url", image_url: { url: `data:${asset.mimeType};base64,${asset.data}` } });
+                        // For vision models, push objects to array
+                        messages[1].content.push({ type: "text", text: assetText });
+                        if (asset.isVideo && Array.isArray(asset.data)) {
+                            asset.data.forEach(frameData => {
+                                 messages[1].content.push({ type: "image_url", image_url: { url: `data:image/jpeg;base64,${frameData}` } });
+                            });
+                        } else {
+                              messages[1].content.push({ type: "image_url", image_url: { url: `data:${asset.mimeType};base64,${asset.data}` } });
+                        }
                     }
                 });
+                // ------------------------------------------------------------------
 
                 const response = await fetch(endpoint, {
                     method: 'POST',
@@ -791,18 +889,37 @@ const App = () => {
                 }
                 const data = await response.json();
                 let resultText = data.choices[0].message.content;
-                resultText = resultText.replace(/```json/g, '').replace(/```/g, '').trim();
+                // Improved regex to strip markdown blocks more reliably (case insensitive, various spacing)
+                resultText = resultText.replace(/```[a-z]*\s*/gi, '').replace(/```/g, '').trim();
                 let rawParse = JSON.parse(resultText);
+                
+                // --- ROBUST JSON NORMALIZATION START ---
+                // Helper to lowercase keys (e.g. Title -> title)
+                const normalizeItem = (item) => {
+                    if (!item || typeof item !== 'object') return item;
+                    const newItem = {};
+                    Object.keys(item).forEach(k => newItem[k.toLowerCase()] = item[k]);
+                    return newItem;
+                };
+
                 if (Array.isArray(rawParse)) {
-                    parsedResult = rawParse;
+                    parsedResult = rawParse.map(normalizeItem);
                 } else if (typeof rawParse === 'object') {
+                    // Check if the model wrapped the array in a key like { "data": [...] }
                     const arrayVal = Object.values(rawParse).find(v => Array.isArray(v));
-                    if (arrayVal) parsedResult = arrayVal;
-                    else parsedResult = [rawParse];
+                    if (arrayVal) {
+                        parsedResult = arrayVal.map(normalizeItem);
+                    } else {
+                        // Treat as single object response
+                        parsedResult = [normalizeItem(rawParse)];
+                    }
                 } else {
                     throw new Error(`Unexpected JSON format from ${aiModel}`);
                 }
+                // --- ROBUST JSON NORMALIZATION END ---
+
             } else {
+                // Gemini Logic
                 const contentParts = [{ text: systemPromptText }];
                 validAssets.forEach((asset, index) => {
                     contentParts.push({ text: `\n\n--- INPUT ASSET ${index + 1} ---` });
@@ -827,22 +944,82 @@ const App = () => {
                 }
                 const data = await response.json();
                 let resultText = data.candidates[0].content.parts[0].text;
-                resultText = resultText.replace(/```json/g, '').replace(/```/g, '').trim();
-                parsedResult = JSON.parse(resultText);
+                resultText = resultText.replace(/```[a-z]*\s*/gi, '').replace(/```/g, '').trim();
+                let rawParse = JSON.parse(resultText);
+
+                // Apply same normalization for Gemini results
+                const normalizeItem = (item) => {
+                    if (!item || typeof item !== 'object') return item;
+                    const newItem = {};
+                    Object.keys(item).forEach(k => newItem[k.toLowerCase()] = item[k]);
+                    return newItem;
+                };
+
+                if (Array.isArray(rawParse)) {
+                    parsedResult = rawParse.map(normalizeItem);
+                } else if (typeof rawParse === 'object') {
+                     const arrayVal = Object.values(rawParse).find(v => Array.isArray(v));
+                     if (arrayVal) parsedResult = arrayVal.map(normalizeItem);
+                     else parsedResult = [normalizeItem(rawParse)];
+                }
             }
         }
+        
         if (!Array.isArray(parsedResult)) {
-            if (typeof parsedResult === 'object') parsedResult = [parsedResult];
-            else throw new Error("AI did not return a JSON Array");
+             throw new Error("AI response could not be parsed into a list of assets.");
         }
+
         const finalResults = {};
         validAssets.forEach((asset, idx) => {
             if (parsedResult[idx]) {
+                // Sanitize Keywords
+                if (parsedResult[idx].keywords) {
+                    if (Array.isArray(parsedResult[idx].keywords)) {
+                        parsedResult[idx].keywords = parsedResult[idx].keywords.join(', ');
+                    } else if (typeof parsedResult[idx].keywords !== 'string') {
+                        parsedResult[idx].keywords = String(parsedResult[idx].keywords);
+                    }
+                } else {
+                    parsedResult[idx].keywords = "";
+                }
+
                 if (parsedResult[idx].keywords && typeof parsedResult[idx].keywords === 'string') {
-                    let kws = parsedResult[idx].keywords.split(',').map(k => k.trim()).filter(k => k.length > 0);
-                    if (kws.length > 49) kws = kws.slice(0, 49);
+                    // Improved splitting for raw result processing
+                    const splitRegex = /[,;\n\r]+/;
+                    let kws = parsedResult[idx].keywords.split(splitRegex).map(k => k.trim()).filter(k => k.length > 0);
+                    // Explicit truncation right at the source
+                    if (kws.length > targetKeywordCount) kws = kws.slice(0, targetKeywordCount);
                     parsedResult[idx].keywords = kws.join(', ');
                 }
+                
+                // --- NEW TITLE TRUNCATION LOGIC ---
+                // Sanitize Title first
+                if (parsedResult[idx].title) {
+                    if (typeof parsedResult[idx].title !== 'string') {
+                        parsedResult[idx].title = String(parsedResult[idx].title);
+                    }
+                    let title = parsedResult[idx].title.trim();
+                    // Remove trailing period if present (enforcing the rule)
+                    if (title.endsWith('.')) {
+                        title = title.slice(0, -1);
+                    }
+                    
+                    // Hard truncate if still too long (using MAX_TITLE_LENGTH constant)
+                    if (title.length > MAX_TITLE_LENGTH) {
+                        const truncated = title.substring(0, MAX_TITLE_LENGTH);
+                        const lastSpace = truncated.lastIndexOf(' ');
+                        if (lastSpace > 0) {
+                            title = truncated.substring(0, lastSpace);
+                        } else {
+                            title = truncated;
+                        }
+                    }
+                    parsedResult[idx].title = title;
+                } else {
+                    parsedResult[idx].title = "";
+                }
+                // -----------------------------------
+
                 finalResults[asset.id] = parsedResult[idx];
             }
         });
@@ -884,7 +1061,10 @@ const App = () => {
             const currentFiles = filesRef.current;
             const validChunk = chunk.filter(f => currentFiles.find(cf => cf.id === f.id));
             if (validChunk.length === 0) continue;
-            let retries = 1; 
+            
+            // Aggressive Retry Logic for Rate Limits
+            let retries = 10; 
+            let delay = 2000;
             let success = false;
             let lastError = null;
 
@@ -903,7 +1083,7 @@ const App = () => {
                                 total: kwArray.length
                             };
                             const predictedCategory = result.category_id || 8;
-                            const finalCategory = useAiCategory ? predictedCategory : 8;
+                            const finalCategory = useAiCategory ? predictedCategory : defaultCategoryIdRef.current;
                             const currentCsvExt = csvExtensionRef.current;
                             const currentPreserve = preserveExtensionRef.current;
                             let finalName = f.name;
@@ -930,18 +1110,28 @@ const App = () => {
                         return f;
                     }));
                     success = true;
+                    // Add a small delay even after success to be nice to the API
                     await new Promise(resolve => setTimeout(resolve, 1000));
                 } catch (error) {
-                    console.error(`Error processing batch:`, error);
+                    console.error(`Batch processing error (Remaining retries: ${retries}):`, error);
                     lastError = error;
                     const errorStr = error.toString();
-                    if (errorStr.includes("API Key") || errorStr.includes("403") || errorStr.includes("400") || errorStr.includes("Invalid") || errorStr.includes("Quota")) {
+                    
+                    // Check for Rate Limit (429) or explicit "Rate limit" text
+                    if (errorStr.includes("429") || errorStr.includes("Rate limit")) {
+                        console.warn(`Rate limit hit. Retrying in ${delay}ms...`);
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                        delay = Math.min(delay * 2, 60000); // Backoff up to 60s
+                        retries--;
+                    } else if (errorStr.includes("API Key") || errorStr.includes("403") || errorStr.includes("400") || errorStr.includes("Invalid") || errorStr.includes("insufficient_quota")) {
                          setIsKeyInvalid(true);
                          setIsKeySaved(false);
                          setUserApiKey('');
                          retries = 0;
                     } else {
+                        // Generic error retry
                         retries--;
+                        await new Promise(resolve => setTimeout(resolve, 2000));
                     }
                 }
             }
@@ -953,6 +1143,10 @@ const App = () => {
                       displayError = "OpenAI Quota Exceeded. Check billing.";
                    } else if (errStr.includes("API Key")) {
                       displayError = "Invalid API Key.";
+                   } else if (errStr.includes("support Vision")) {
+                      displayError = "Model Error: Selected model does not support images.";
+                   } else if (errStr.includes("429")) {
+                      displayError = "Rate Limit Exceeded. Try again later.";
                    } else {
                        displayError = errStr.length > 50 ? errStr.substring(0, 50) + "..." : errStr;
                    }
@@ -1338,36 +1532,46 @@ const App = () => {
           <div className={`max-w-md w-full rounded-2xl shadow-2xl overflow-hidden ${theme === 'dark' ? 'bg-slate-800' : 'bg-white'}`}>
               <div className="p-6">
                   <div className="flex justify-between items-center mb-4">
-                    <h3 className="text-xl font-bold">How to get your API Key</h3>
+                    <h3 className="text-xl font-bold">
+                        How to get your {aiModel === 'groq' ? 'Groq' : aiModel === 'chatgpt' ? 'OpenAI' : 'Gemini'} API Key
+                    </h3>
                     <button onClick={() => setShowTutorial(false)} className="text-slate-400 hover:text-red-500"><X size={20}/></button>
                   </div>
                   
-                  <ol className={`list-decimal list-inside space-y-3 mb-6 text-sm ${theme === 'dark' ? 'text-slate-300' : 'text-slate-600'}`}>
-                      {aiModel === 'groq' ? (
-                          <>
-                           <li>Go to <a href="https://console.groq.com/keys" target="_blank" rel="noreferrer" className="font-semibold text-indigo-500 hover:underline">Groq Cloud Console</a>.</li>
-                           <li>Log in or Sign up.</li>
-                           <li>Navigate to API Keys and create a new key.</li>
-                          </>
-                      ) : aiModel === 'chatgpt' ? (
-                          <>
-                           <li>Go to <a href="https://platform.openai.com/api-keys" target="_blank" rel="noreferrer" className="font-semibold text-indigo-500 hover:underline">OpenAI Platform</a>.</li>
-                           <li>Log in or Sign up.</li>
-                           <li>Create a new secret key.</li>
-                          </>
-                      ) : (
-                          <>
-                           <li>Go to <a href="https://aistudio.google.com" target="_blank" rel="noreferrer" className="font-semibold text-indigo-500 hover:underline">Google AI Studio</a>.</li>
-                           <li>Log in with your Google account.</li>
-                           <li>Click the blue <span className="font-semibold">"Get API Key"</span> button.</li>
-                          </>
-                      )}
-                      <li>Copy the key and paste it into the box above.</li>
-                  </ol>
+                  {aiModel === 'gemini' && (
+                      <ol className={`list-decimal list-inside space-y-3 mb-6 text-sm ${theme === 'dark' ? 'text-slate-300' : 'text-slate-600'}`}>
+                          <li>Go to <a href="https://aistudio.google.com/app/api-keys" target="_blank" rel="noreferrer" className="font-semibold text-indigo-500 hover:underline">Google AI Studio</a>.</li>
+                          <li>Log in with your Google account.</li>
+                          <li>Click the blue <span className="font-semibold">"Create API Key"</span> button.</li>
+                          <li>Copy the key and paste it into the box above.</li>
+                      </ol>
+                  )}
+
+                  {aiModel === 'groq' && (
+                      <ol className={`list-decimal list-inside space-y-3 mb-6 text-sm ${theme === 'dark' ? 'text-slate-300' : 'text-slate-600'}`}>
+                          <li>Go to <a href="https://console.groq.com/keys" target="_blank" rel="noreferrer" className="font-semibold text-indigo-500 hover:underline">Groq Cloud Console</a>.</li>
+                          <li>Log in or Sign up.</li>
+                          <li>Click <span className="font-semibold">"Create API Key"</span>.</li>
+                          <li>Name your key and copy it immediately.</li>
+                      </ol>
+                  )}
+
+                  {aiModel === 'chatgpt' && (
+                      <ol className={`list-decimal list-inside space-y-3 mb-6 text-sm ${theme === 'dark' ? 'text-slate-300' : 'text-slate-600'}`}>
+                          <li>Go to <a href="https://platform.openai.com/api-keys" target="_blank" rel="noreferrer" className="font-semibold text-indigo-500 hover:underline">OpenAI Platform</a>.</li>
+                          <li>Log in to your OpenAI account.</li>
+                          <li>Click <span className="font-semibold">"Create new secret key"</span>.</li>
+                          <li>Ensure you have billing credits available.</li>
+                      </ol>
+                  )}
                   
                   <div className="flex gap-3">
                     <a 
-                        href={aiModel === 'groq' ? "https://console.groq.com/keys" : aiModel === 'chatgpt' ? "https://platform.openai.com/api-keys" : "https://aistudio.google.com/app/api-keys"} 
+                        href={
+                            aiModel === 'groq' ? "https://console.groq.com/keys" :
+                            aiModel === 'chatgpt' ? "https://platform.openai.com/api-keys" :
+                            "https://aistudio.google.com/app/api-keys"
+                        }
                         target="_blank" 
                         rel="noreferrer"
                         className="flex-1 py-3 text-center bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-semibold flex items-center justify-center gap-2 transition-colors"
@@ -1582,6 +1786,7 @@ const App = () => {
             <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400">Smart</span> All In One SEO-optimized AI automation for images, videos for Adobe Stock.
           </p>
           <p className={`text-xs max-w-2xl mx-auto font-semibold mb-8 ${theme === 'dark' ? 'text-white' : 'text-slate-700'}`}>
+            <span className="bg-black text-blue-400 px-1.5 py-0.5 rounded mr-1">Gemini</span>
             Important: Upload at least 3 images per batch and Keep Disable Auto Generate Button to maximize your API key value or you have to replace your key to new one after every 20-30 processed images.
           </p>
             
@@ -1616,7 +1821,7 @@ const App = () => {
       <main className="max-w-7xl mx-auto px-4 pb-24 flex flex-col lg:flex-row gap-6 h-auto lg:h-[calc(100vh-200px)]">
         
         {/* LEFT COLUMN: Upload & Batch List */}
-        <div className={`w-full ${viewMode === 'batch' ? 'lg:w-1/4' : 'lg:w-1/3'} flex flex-col gap-4 transition-all duration-300`}>
+        <div className={`w-full ${viewMode === 'batch' ? 'lg:w-1/4' : 'lg:w-1/3'} flex flex-col gap-4 transition-all duration-300 lg:h-full`}>
           
           {/* Content Type Tabs */}
           <div className={`p-1 rounded-xl flex ${theme === 'dark' ? 'bg-slate-800' : 'bg-slate-200'}`}>
@@ -1736,42 +1941,111 @@ const App = () => {
             </p>
           </div>
 
-{/* Auto Generate & Default Category (Flat Compact Style) */}
+        {/* Settings Sliders */}
+          <div className={`mt-2 space-y-3 p-3 rounded-xl border ${theme === 'dark' ? 'border-slate-700 bg-slate-800/50' : 'border-slate-200 bg-slate-50'}`}>
+              
+             {/* Title Length Slider */}
+             <div>
+               <div className="flex justify-between items-center mb-1">
+                 <label className={`text-[10px] font-bold uppercase tracking-wider ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>Max Title Length Arround</label>
+                 <span className="text-xs font-mono font-bold text-indigo-500">{maxTitleLength}</span>
+               </div>
+               <div className="flex items-center gap-3">
+                 <button 
+                   onClick={() => setMaxTitleLength(70)}
+                   className={`flex items-center gap-2 pl-1 pr-3 py-1 rounded-full border transition-all group ${
+                      maxTitleLength === 70 
+                      ? 'bg-indigo-500/10 border-indigo-500/50' 
+                      : 'bg-slate-800 border-slate-700 hover:border-slate-600'
+                   }`}
+                   title="Reset to optimal (70)"
+                 >
+                   <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold ${
+                      maxTitleLength === 70 ? 'bg-indigo-500 text-white' : 'bg-slate-700 text-slate-400 group-hover:bg-slate-600'
+                   }`}>
+                      70
+                   </div>
+                   <span className={`text-[10px] font-medium uppercase tracking-wide ${
+                      maxTitleLength === 70 ? 'text-indigo-400' : 'text-slate-500 group-hover:text-slate-400'
+                   }`}>
+                      Best
+                   </span>
+                 </button>
+                 <input 
+                   type="range" 
+                   min="50" 
+                   max="150" 
+                   value={maxTitleLength} 
+                   onChange={(e) => setMaxTitleLength(parseInt(e.target.value))}
+                   className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer dark:bg-slate-700 accent-indigo-500"
+                 />
+               </div>
+             </div>
+
+             {/* Keyword Count Slider */}
+             <div>
+               <div className="flex justify-between items-center mb-1">
+                 <label className={`text-[10px] font-bold uppercase tracking-wider ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>Keyword Limit</label>
+                 <span className="text-xs font-mono font-bold text-indigo-500">{targetKeywordCount}</span>
+               </div>
+               <div className="flex items-center gap-3">
+                 <button 
+                   onClick={() => setTargetKeywordCount(49)}
+                   className={`flex items-center gap-2 pl-1 pr-3 py-1 rounded-full border transition-all group ${
+                      targetKeywordCount === 49 
+                      ? 'bg-indigo-500/10 border-indigo-500/50' 
+                      : 'bg-slate-800 border-slate-700 hover:border-slate-600'
+                   }`}
+                   title="Reset to optimal (49)"
+                 >
+                   <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold ${
+                      targetKeywordCount === 49 ? 'bg-indigo-500 text-white' : 'bg-slate-700 text-slate-400 group-hover:bg-slate-600'
+                   }`}>
+                      49
+                   </div>
+                   <span className={`text-[10px] font-medium uppercase tracking-wide ${
+                      targetKeywordCount === 49 ? 'text-indigo-400' : 'text-slate-500 group-hover:text-slate-400'
+                   }`}>
+                      Best
+                   </span>
+                 </button>
+                 <input 
+                   type="range" 
+                   min="10" 
+                   max="50" 
+                   value={targetKeywordCount} 
+                   onChange={(e) => setTargetKeywordCount(parseInt(e.target.value))}
+                   className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer dark:bg-slate-700 accent-indigo-500"
+                 />
+               </div>
+             </div>
+
+          </div>
+
+{/* Category Selection Row */}
 <div className="flex gap-2 mt-1">
+    <button
+        onClick={toggleCategoryMode}
+        className={`px-3 py-2 rounded-lg text-xs font-medium transition-colors whitespace-nowrap
+            ${useAiCategory
+                ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                : 'bg-slate-200 hover:bg-slate-300 text-slate-600 dark:bg-slate-700 dark:text-slate-300'
+            }`}
+    >
+        {useAiCategory ? 'AI Category' : 'Custom Category'}
+    </button>
 
-  {/* Auto Generate */}
-  <button
-    onClick={() => setIsAutoGenerate(!isAutoGenerate)}
-    className={`flex-1 h-10 px-3 rounded-lg
-               flex items-center justify-center gap-2
-               text-xs font-medium whitespace-nowrap
-               transition-colors
-               ${isAutoGenerate 
-                 ? 'bg-green-600 hover:bg-green-700 text-white' 
-                 : 'bg-slate-200 hover:bg-slate-300 text-slate-600 dark:bg-slate-700 dark:text-slate-300'
-               }`}
-  >
-    {isAutoGenerate ? <Zap size={14} className="relative top-[1px]" /> : <ZapOff size={14} className="relative top-[1px]" />}
-    {isAutoGenerate ? 'Auto Gen: ON' : 'Auto Gen: OFF'}
-  </button>
-
-  {/* Default / AI Category */}
-  <button
-    onClick={toggleCategoryMode}
-    className={`flex-1 h-10 px-3 rounded-lg
-                flex items-center justify-center gap-2
-                text-xs font-medium whitespace-nowrap
-                transition-colors
-                ${
-                  useAiCategory
-                    ? 'bg-green-600 hover:bg-green-700 text-white'
-                    : 'bg-slate-200 hover:bg-slate-300 text-slate-800'
-                }`}
-  >
-    <LayoutGrid size={14} className="relative top-[1px]" />
-    {useAiCategory ? 'AI Category' : 'Default Category'}
-  </button>
-
+    <div className={`flex-1 flex items-center rounded-lg border px-2 ${useAiCategory ? 'opacity-50' : ''} ${theme === 'dark' ? 'bg-slate-800 border-slate-700' : 'bg-slate-200 border-slate-300'}`}>
+         <LayoutGrid size={14} className={`mr-2 flex-shrink-0 ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`} />
+         <select
+            value={defaultCategoryId}
+            onChange={handleDefaultCategoryChange}
+            disabled={useAiCategory}
+            className={`w-full bg-transparent text-xs font-medium py-2 outline-none cursor-pointer ${theme === 'dark' ? 'text-slate-300' : 'text-slate-700'}`}
+         >
+            {ADOBE_CATEGORIES.map(c => <option key={c.id} value={c.id} className={theme === 'dark' ? 'bg-slate-800' : 'bg-white'}>{c.name}</option>)}
+         </select>
+    </div>
 </div>
           
           {/* Replace All Filename Extensions in CSV */}
@@ -1783,12 +2057,12 @@ const App = () => {
               <button
                 onClick={handlePreserveExtension}
                 className={`flex-1 text-xs py-2.5 px-2 rounded-xl border font-medium transition-all ${
-                  !preserveExtension
+                  preserveExtension
                     ? 'bg-blue-600 border-blue-600 text-white shadow-lg'
                     : theme === 'dark' ? 'bg-slate-800 border-slate-700 text-slate-400' : 'bg-white border-slate-300 text-slate-600'
                 }`}
               >
-                {preserveExtension ? "Default Filename" : "Change Extension"}
+                {preserveExtension ? "Default Filename" : "Custom Filename"}
               </button>
               <select
                 value={csvExtension}
@@ -1816,8 +2090,8 @@ const App = () => {
             </div>
           </div>
 
-          {/* Batch List */}
-          <div className={`flex-1 overflow-y-auto rounded-xl border h-48 lg:h-full lg:flex-1 ${theme === 'dark' ? 'bg-slate-800/30 border-slate-800' : 'bg-white border-slate-200'} p-2 space-y-2 mt-2`}>
+          {/* Batch List - Updated height for better visibility on mobile (h-64 instead of h-48/80) */}
+          <div className={`flex-1 overflow-y-auto rounded-xl border h-64 sm:h-80 lg:h-full lg:flex-1 ${theme === 'dark' ? 'bg-slate-800/30 border-slate-800' : 'bg-white border-slate-200'} p-2 space-y-2`}>
             {files.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-slate-500 opacity-60">
                 <p className="text-sm">No files uploaded yet</p>
@@ -1836,7 +2110,8 @@ const App = () => {
                       : 'border-transparent hover:bg-slate-700/50'
                   }`}
                 >
-                  <div className="w-12 h-12 rounded overflow-hidden bg-slate-900 shrink-0 relative">
+                  {/* Updated Thumbnail Size (w-20 h-20 instead of w-12 h-12) */}
+                  <div className="w-20 h-20 rounded overflow-hidden bg-slate-900 shrink-0 relative">
                     <img src={file.preview} alt="preview" className="w-full h-full object-cover" />
                     {file.status === 'processing' && (
                       <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
@@ -1855,7 +2130,7 @@ const App = () => {
                     )}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate">{file.name}</p> {/* Updated to use file.name */}
+                    <p className="text-sm font-medium break-words leading-tight" title={file.metadata.title || file.name}>{file.metadata.title || file.name}</p> {/* Title display updated */}
                     <div className="flex items-center gap-2 mt-1">
                       <span className={`text-[10px] px-1.5 py-0.5 rounded border ${
                         file.status === 'complete' ? 'border-green-500/30 text-green-400' :
@@ -2113,7 +2388,7 @@ const App = () => {
                                 </div>
                               </div>
                               {file.status === 'complete' ? (
-                                <p className="text-sm leading-snug line-clamp-2" title={file.metadata.title}>
+                                <p className="text-sm leading-snug" title={file.metadata.title}>
                                   {file.metadata.title}
                                 </p>
                               ) : (
@@ -2250,7 +2525,7 @@ const App = () => {
                     {/* Editor Header */}
                     <div className={`px-6 py-4 border-b flex items-center justify-between ${theme === 'dark' ? 'border-slate-800' : 'border-slate-200'}`}>
                       <div className="flex items-center gap-4">
-                        <h3 className="font-semibold text-lg">{activeFile.name}</h3> {/* Updated to use activeFile.name */}
+                        <h3 className="font-semibold text-lg max-w-[200px] sm:max-w-md truncate" title={activeFile.name}>{activeFile.name}</h3>
                         {activeFile.status === 'complete' && (
                           <div className="flex gap-2">
                             <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-400 border border-indigo-500/30">
@@ -2272,6 +2547,17 @@ const App = () => {
 
                     {/* Editor Content */}
                     <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                      
+                      {/* --- ADDED: IMAGE PREVIEW SECTION --- */}
+                      <div className={`w-full h-64 sm:h-96 lg:h-[500px] rounded-xl overflow-hidden flex items-center justify-center border ${theme === 'dark' ? 'bg-slate-900 border-slate-700' : 'bg-slate-100 border-slate-200'}`}>
+                         <img 
+                           src={activeFile.preview} 
+                           alt="Preview" 
+                           className="max-w-full max-h-full object-contain"
+                         />
+                      </div>
+                      {/* ------------------------------------ */}
+
                       {/* 1. TITLE */}
                       <div className="space-y-2">
                         <div className="flex justify-between items-center">
