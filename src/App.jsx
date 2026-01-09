@@ -37,11 +37,14 @@ import {
   Lock,
   ArrowRightLeft,
   Cpu,
-  Bot
+  Bot,
+  Layers,
+  Globe,
+  Key
 } from 'lucide-react';
 
 /**
- * Hacky MetaGen 3.9 - Adobe Stock Metadata Generator
+ * Hacky MetaGen 4.0 - Adobe Stock Metadata Generator
  * Built with React + Tailwind CSS + Gemini API + Groq API + ChatGPT API
  * Optimized for Client-Side Preview
  */
@@ -69,9 +72,13 @@ const USE_BACKEND = getEnvBool('NEXT_PUBLIC_USE_BACKEND', false) || MANUAL_USE_B
 const REQUIRE_USER_API_KEY = getEnvBool('NEXT_PUBLIC_REQUIRE_USER_API_KEY', false) || MANUAL_REQUIRE_USER_API_KEY;
 
 // --- Constants ---
-const MAX_TITLE_LENGTH = 70; // Updated to 70 per request
+const MAX_TITLE_LENGTH = 70; 
 const MIN_TITLE_LENGTH = 40; 
 const TARGET_KEYWORD_COUNT = 49;
+// Validation thresholds - lower than targets to prevent hard failures on "okay" results
+const SAFE_MIN_TITLE_LENGTH = 15; 
+const SAFE_MIN_KEYWORD_COUNT = 15;
+
 const BATCH_SIZE = 2; // Reduced to 2 to prevent Rate Limiting
 const apiKey = ""; 
 
@@ -105,6 +112,18 @@ const ADOBE_CATEGORIES = [
   { id: 19, name: "Technology" },
   { id: 20, name: "Transport" },
   { id: 21, name: "Travel" },
+];
+
+const AI_GENERATORS = [
+    "Midjourney",
+    "DALL-E 3",
+    "Stable Diffusion",
+    "Flux.1",
+    "Leonardo.ai",
+    "Adobe Firefly",
+    "Ideogram",
+    "Mystic",
+    "Other"
 ];
 
 const LEGAL_CONTENT = {
@@ -367,6 +386,11 @@ const App = () => {
   const [viewMode, setViewMode] = useState('batch'); 
   const [copiedId, setCopiedId] = useState(null); 
   
+  // Platform Selection State (Adobe, Freepik, Vecteezy, Shutterstock)
+  const [targetPlatform, setTargetPlatform] = useState('adobe');
+  // Freepik Model State
+  const [freepikModel, setFreepikModel] = useState('Midjourney');
+
   const [newKeyword, setNewKeyword] = useState('');
   const [draggedIndex, setDraggedIndex] = useState(null);
 
@@ -399,8 +423,17 @@ const App = () => {
 
   const [aiModel, setAiModel] = useState(() => localStorage.getItem('hackymetagen_ai_model') || 'gemini');
 
+  // --- MULTI-KEY SUPPORT ---
   const [userApiKey, setUserApiKey] = useState(''); 
-  const [isKeySaved, setIsKeySaved] = useState(false); 
+  const [storedKeys, setStoredKeys] = useState(() => {
+    return {
+        gemini: JSON.parse(localStorage.getItem('hackymetagen_keys_gemini') || '[]'),
+        groq: JSON.parse(localStorage.getItem('hackymetagen_keys_groq') || '[]'),
+        chatgpt: JSON.parse(localStorage.getItem('hackymetagen_keys_chatgpt') || '[]')
+    };
+  });
+  const keyRotationIndex = useRef({ gemini: 0, groq: 0, chatgpt: 0 });
+
   const [isKeyInvalid, setIsKeyInvalid] = useState(false); 
   const [showSuccessMessage, setShowSuccessMessage] = useState(false); 
   const [showErrorMessage, setShowErrorMessage] = useState(false); 
@@ -436,7 +469,7 @@ const App = () => {
   // Defined as mixed content array using useMemo
   const features = useMemo(() => [
     {type: 'jsx', content: (<span className="flex items-center gap-2 whitespace-nowrap truncate max-w-full">Chatgpt and Groq Supports<span className="text-[10px] px-1.5 py-0.5 rounded bg-white text-black font-bold uppercase">New</span></span>)},
-    {type: 'jsx', content: (<span className="flex items-center gap-2 whitespace-nowrap truncate max-w-full">Max Title and Keyword count Selection Added<span className="text-[10px] px-1.5 py-0.5 rounded bg-white text-black font-bold uppercase">New</span></span>)},
+    {type: 'jsx', content: (<span className="flex items-center gap-2 whitespace-nowrap truncate max-w-full">Multi Platform Support<span className="text-[10px] px-1.5 py-0.5 rounded bg-white text-black font-bold uppercase">New</span></span>)},
     {type: 'jsx', content: (<span className="flex items-center gap-2 whitespace-nowrap truncate max-w-full">Custom Keywords (Appended) Supports<span className="text-[10px] px-1.5 py-0.5 rounded bg-white text-black font-bold uppercase">New</span></span>)},
     {type: 'jsx', content: (<span className="flex items-center gap-2 whitespace-nowrap truncate max-w-full">Smart Batch Processing (Quota Saver)<span className="text-[10px] px-1.5 py-0.5 rounded bg-white text-black font-bold uppercase">New</span></span>)},
     {type: 'jsx', content: (<span className="flex items-center gap-2 whitespace-nowrap truncate max-w-full">Notification Sound On Batch Completed<span className="text-[10px] px-1.5 py-0.5 rounded bg-white text-black font-bold uppercase animate-pulse">New</span></span>)},
@@ -463,26 +496,22 @@ const App = () => {
   useEffect(() => { apiKeyRef.current = userApiKey; }, [userApiKey]);
   useEffect(() => { defaultKeywordsRef.current = defaultKeywords; }, [defaultKeywords]);
 
+  // Keep API key logic somewhat backward compatible but use new state
   useEffect(() => {
-    let keyKey;
-    if (aiModel === 'groq') keyKey = 'hackymetagen_groq_api_key';
-    else if (aiModel === 'chatgpt') keyKey = 'hackymetagen_openai_api_key';
-    else keyKey = 'hackymetagen_api_key';
-
-    const savedKey = localStorage.getItem(keyKey);
-    if (savedKey) {
-      setIsKeySaved(true);
-      setUserApiKey('');
-      apiKeyRef.current = savedKey;
-    } else {
-      setIsKeySaved(false);
-      setUserApiKey('');
-      apiKeyRef.current = '';
+    // Migration: if old single key exists but pool is empty, move it to pool
+    const oldKeyKey = aiModel === 'groq' ? 'hackymetagen_groq_api_key' : aiModel === 'chatgpt' ? 'hackymetagen_openai_api_key' : 'hackymetagen_api_key';
+    const oldKey = localStorage.getItem(oldKeyKey);
+    const currentPool = storedKeys[aiModel] || [];
+    
+    if (oldKey && currentPool.length === 0) {
+        const newPool = [oldKey];
+        const newKeys = { ...storedKeys, [aiModel]: newPool };
+        setStoredKeys(newKeys);
+        localStorage.setItem(`hackymetagen_keys_${aiModel}`, JSON.stringify(newPool));
     }
-    setIsKeyInvalid(false);
   }, [aiModel]);
 
-  useEffect(() => { document.title = "Hacky MetaGen"; }, []);
+  useEffect(() => { document.title = "Hacky MetaGen 4.0"; }, []);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -511,31 +540,66 @@ const App = () => {
   // --- INTERNAL HELPER FUNCTIONS AND HANDLERS (DEFINED IN ORDER OF DEPENDENCY) ---
 
   const handleApplyKey = async () => {
-    const keyToTest = userApiKey.trim();
-    if (!keyToTest) return;
+    const input = userApiKey.trim();
+    if (!input) return;
+    
+    // Split by comma or newline to support bulk paste
+    const candidates = input.split(/[\n,]+/).map(k => k.trim()).filter(k => k);
+    
     setIsVerifying(true);
-    const isValid = await checkApiKeyValidity(keyToTest, aiModel);
-    setIsVerifying(false);
-    if (isValid) {
-        let keyKey;
-        if (aiModel === 'groq') keyKey = 'hackymetagen_groq_api_key';
-        else if (aiModel === 'chatgpt') keyKey = 'hackymetagen_openai_api_key';
-        else keyKey = 'hackymetagen_api_key';
-
-        localStorage.setItem(keyKey, keyToTest);
-        setIsKeySaved(true);
-        setIsKeyInvalid(false);
-        setUserApiKey('');
-        apiKeyRef.current = keyToTest;
-        setShowSuccessMessage(true);
-        setTimeout(() => setShowSuccessMessage(false), 5000);
-    } else {
-        setIsKeyInvalid(true);
-        setIsKeySaved(false);
-        setUserApiKey(''); 
-        setShowErrorMessage(true);
-        setTimeout(() => setShowErrorMessage(false), 5000);
+    let validCount = 0;
+    const currentPool = [...(storedKeys[aiModel] || [])];
+    
+    for (const key of candidates) {
+        // Avoid duplicates
+        if (currentPool.includes(key)) continue;
+        
+        const isValid = await checkApiKeyValidity(key, aiModel);
+        if (isValid) {
+            currentPool.push(key);
+            validCount++;
+        }
     }
+    setIsVerifying(false);
+
+    if (validCount > 0) {
+        const newKeys = { ...storedKeys, [aiModel]: currentPool };
+        setStoredKeys(newKeys);
+        localStorage.setItem(`hackymetagen_keys_${aiModel}`, JSON.stringify(currentPool));
+        setUserApiKey('');
+        setShowSuccessMessage(true);
+        setTimeout(() => setShowSuccessMessage(false), 3000);
+    } else {
+        setShowErrorMessage(true); // "No valid keys found"
+        setTimeout(() => setShowErrorMessage(false), 3000);
+    }
+  };
+
+  const handleClearKeys = (e) => {
+    // Prevent event bubbling which might trigger other handlers
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+
+    // Removed window.confirm to ensure action works in all environments
+    
+    // 1. Clear State using functional update
+    setStoredKeys(prevKeys => ({ ...prevKeys, [aiModel]: [] }));
+    
+    // 2. Clear Multi-Key Storage
+    localStorage.setItem(`hackymetagen_keys_${aiModel}`, JSON.stringify([]));
+
+    // 3. Clear Legacy Single Key Storage (Fixes the "Resurrection" bug)
+    const oldKeyKey = aiModel === 'groq' ? 'hackymetagen_groq_api_key' : aiModel === 'chatgpt' ? 'hackymetagen_openai_api_key' : 'hackymetagen_api_key';
+    localStorage.removeItem(oldKeyKey);
+
+    // 4. Clear current input and ref
+    setUserApiKey('');
+    apiKeyRef.current = '';
+    
+    // 5. Force reset rotation index
+    keyRotationIndex.current[aiModel] = 0;
   };
 
   const handleToggleTheme = () => {
@@ -729,7 +793,22 @@ const App = () => {
     else if (aiModel === 'chatgpt') keyKey = 'hackymetagen_openai_api_key';
     else keyKey = 'hackymetagen_api_key';
     
-    let activeKey = apiKeyRef.current || localStorage.getItem(keyKey) || userApiKey || apiKey;
+    // --- MULTI-KEY LOGIC ---
+    // Get the pool of keys for current model
+    const keysPool = storedKeys[aiModel] || [];
+    let activeKey = "";
+
+    // Fallback for empty pool if manual override or single key logic still lingers in user's mind/env
+    if (keysPool.length > 0) {
+        // Round Robin Selection
+        const keyIndex = keyRotationIndex.current[aiModel] % keysPool.length;
+        activeKey = keysPool[keyIndex];
+        // Rotate index for next call
+        keyRotationIndex.current[aiModel] = (keyIndex + 1) % keysPool.length;
+    } else {
+        // Fallback to legacy
+        activeKey = apiKeyRef.current || localStorage.getItem(keyKey) || userApiKey || apiKey;
+    }
 
     if (REQUIRE_USER_API_KEY && !activeKey) {
         throw new Error(`Missing ${aiModel === 'groq' ? 'Groq' : aiModel === 'chatgpt' ? 'ChatGPT' : 'Gemini'} API Key. Please click the Info icon.`);
@@ -757,16 +836,23 @@ const App = () => {
         let attempt = 0;
         let isValidResult = false;
         
+        // Helper to normalize keys (lowercase) - Defined here to use in both blocks
+        const normalizeItem = (item) => {
+            if (!item || typeof item !== 'object') return item;
+            const newItem = {};
+            Object.keys(item).forEach(k => newItem[k.toLowerCase()] = item[k]);
+            return newItem;
+        };
+        
         // --- RETRY LOOP FOR QUALITY ASSURANCE ---
         while (attempt < 3 && !isValidResult) {
             attempt++;
             
             // Adjust prompt aggressiveness based on attempt
             const isRetry = attempt > 1;
-            const strictnessPrefix = isRetry ? "PREVIOUS ATTEMPT FAILED. TITLE WAS TOO SHORT OR KEYWORDS TOO FEW. YOU MUST WRITE MORE. " : "";
+            const strictnessPrefix = isRetry ? "PREVIOUS ATTEMPT FAILED. RETURN VALID JSON ARRAY. " : "";
 
             if (USE_BACKEND) {
-                // ... (Backend logic omitted for brevity as it follows similar pattern or relies on server) ...
                  const response = await fetch('/api/generate', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -779,69 +865,76 @@ const App = () => {
                     }),
                     signal: controller.signal
                 });
-                if (!response.ok) throw new Error("Backend Error");
-                parsedResult = await response.json();
-                isValidResult = true; // Assume backend handles validation or we accept it
+
+                // SPECIFIC ERROR HANDLING FOR BACKEND
+                if (response.status === 401) throw new Error("Invalid API Key"); 
+                if (response.status === 429) throw new Error("Rate Limit Exceeded");
+                if (!response.ok) throw new Error(`Backend Error: ${response.status}`);
+
+                let rawBackendData = await response.json();
+
+                // --- APPLY ROBUST NORMALIZATION TO BACKEND RESPONSE ---
+                // Backend might return { "data": [...] } or { "0": {}, "1": {} } depending on model quirks
+                if (Array.isArray(rawBackendData)) {
+                    parsedResult = rawBackendData.map(normalizeItem);
+                } else if (typeof rawBackendData === 'object') {
+                    const arrayVal = Object.values(rawBackendData).find(v => Array.isArray(v));
+                    if (arrayVal) {
+                        parsedResult = arrayVal.map(normalizeItem);
+                    } else {
+                        // Handle Llama object-map style { "0": {...}, "1": {...} }
+                        const possibleItems = Object.values(rawBackendData).filter(v => typeof v === 'object' && v !== null && (v.title || v.Title || v.TITLE));
+                        if (possibleItems.length > 0) {
+                            parsedResult = possibleItems.map(normalizeItem);
+                        } else {
+                            // Treat as single object
+                            parsedResult = [normalizeItem(rawBackendData)];
+                        }
+                    }
+                }
+                
+                // Check backend result validity immediately
+                 if (Array.isArray(parsedResult) && parsedResult.length === validAssets.length) {
+                     isValidResult = true;
+                 } else {
+                     console.warn(`Attempt ${attempt}: Backend returned invalid structure.`, rawBackendData);
+                 }
             } else {
                 const categoriesString = ADOBE_CATEGORIES.map(c => `${c.id}. ${c.name}`).join('\n');
                 // Strict prompt client-side
                 const systemPromptText = `
                 ${strictnessPrefix}
-                You are Hacky MetaGen 3.9, a senior SEO expert for Adobe Stock.
+                You are Hacky MetaGen 4.0, a senior SEO expert for Adobe Stock.
                 You are processing a batch of ${validAssets.length} distinct assets.
                 YOUR GOAL: Generate metadata for EACH of the ${validAssets.length} input assets.
-                STRICT RULES FOR EACH ASSET:
-                1. **TITLE**:
-                    - **RULE 1: FORMULA**: [Main Subject] + [Specific Type] + [Action] + [Location/Mood]
-                    Example: "Golden retriever playing happily in sunny park"
-                    - **RULE 2: LENGTH**: Strictly ${MIN_TITLE_LENGTH}-${maxTitleLength} characters.
-                    - **TARGET**: Aim for exactly 65-70 characters.
-                    - **CRITICAL**: Do NOT generate titles shorter than ${MIN_TITLE_LENGTH} characters. If short, add visual details (colors, lighting, background).
-                    - **CRITICAL**: Do NOT generate titles longer than ${maxTitleLength} characters.
-                    - **RULE 3: 5 QUESTIONS**: Answer: ✓ WHAT? ✓ WHO? ✓ ACTION? ✓ WHERE? ✓ MOOD?
-                    - **RULE 4: FRONT-LOAD**:
-                    Position 1-2 = 35% ranking weight (CRITICAL)
-                    Position 3-4 = 25% ranking weight (IMPORTANT)
-                    Position 5+ = 40% ranking weight (SUPPORTING)
-                    - **RULE 5: FORBIDDEN TERMS**:
-                    ✗ No brands (Apple, Canon, Nike)
-                    ✗ No specs (4K, 12MP, resolution)
-                    ✗ No personal names (John, Sarah, celebrities)
-                    ✗ Not alphabetically ordered
-                    - **CRITICAL**: Do NOT add a period (.) at the end of the title.
-                2. **Keywords**: Generate 60 keywords. (We will select the best ${targetKeywordCount}).
-                    - **MANDATORY COUNT**: You MUST provide at least 60 keywords. Do NOT stop at 30 or 40.
-                    - **CRITICAL**: Providing fewer than 50 keywords is a FAILURE. Over-generate synonyms and concepts.
-                    - **EXPANSION STRATEGY**: To reach 60, you must include:
-                    1. **Visuals**: (e.g., dog, grass, clouds, fur)
-                    2. **Concepts**: (e.g., friendship, loyalty, freedom, vitality)
-                    3. **Actions**: (e.g., running, playing, jumping, panting)
-                    4. **Mood/Style**: (e.g., happy, sunny, vibrant, cinematic, bokeh)
-                    5. **Broad Categories**: (e.g., mammal, animal, pet, canine, vertebrate)
-                    - **FORMAT**: Comma-separated string ONLY. No numbered lists. No bullet points.
-                3. **Category**: Choose the single most appropriate category ID (1-21) from the list below:
-                ${categoriesString}
-                4. **Approval Prediction**: Status ("Accepted" or "Rejected") and Reason.
-                    - **MANDATORY ANATOMY MATH CHECK**:
-                    1. **Count People**: X = Total number of people visible.
-                    2. **Count Hands**: Y = Total number of hands visible.
-                    3. **THE RULE**: If Y > (X * 2), REJECT IMMEDIATELY. (e.g. 2 people cannot have 5 hands).
-                    4. **Finger Count**: Inspect each hand. If != 5 fingers, REJECT.
-                    5. **Limb Logic**: If arms/legs bend in impossible ways or disappear, REJECT.
-                    - **Reason**: If rejected, state specific count error (e.g., "Rejected: Anatomy Math - Found 5 hands for 2 people").
-
+                
                 OUTPUT FORMAT (JSON ARRAY ONLY):
-                Return a JSON Array containing exactly ${validAssets.length} objects.
                 [
                     {
-                    "title": "string",
-                    "keywords": "string (comma separated)",
+                    "title": "string (50-70 chars)",
+                    "keywords": "string (comma separated, 49 tags)",
                     "category_id": integer,
                     "approval_status": "Accepted" or "Rejected",
                     "approval_reason": "string"
                     },
                     ...
                 ]
+
+                STRICT RULES:
+                1. **TITLE**:
+                    - Formula: [Main Subject] + [Specific Type] + [Action] + [Location/Mood]
+                    - Length: Strictly ${MIN_TITLE_LENGTH}-${maxTitleLength} characters.
+                    - Forbidden: No brands, no personal names, no 4K/HD specs.
+                    - Critical: Do NOT add a period (.) at the end.
+                2. **KEYWORDS**: 
+                    - Count: STRICTLY 50-60 keywords (we truncate to 49).
+                    - Content: Visuals, Concepts, Actions, Moods.
+                3. **APPROVAL**:
+                    - Check Anatomy (Hands/Feet count), Technical Quality, and Content.
+                    - Status MUST be "Accepted" or "Rejected".
+
+                3. **Category**: Choose the single most appropriate category ID (1-21) from the list below:
+                ${categoriesString}
                 `;
 
                 if (aiModel === 'groq' || aiModel === 'chatgpt') {
@@ -888,22 +981,28 @@ const App = () => {
                     resultText = resultText.replace(/```[a-z]*\s*/gi, '').replace(/```/g, '').trim();
                     let rawParse = JSON.parse(resultText);
                     
-                    const normalizeItem = (item) => {
-                        if (!item || typeof item !== 'object') return item;
-                        const newItem = {};
-                        Object.keys(item).forEach(k => newItem[k.toLowerCase()] = item[k]);
-                        return newItem;
-                    };
-
+                    // --- ROBUST JSON NORMALIZATION START (CLIENT SIDE) ---
                     if (Array.isArray(rawParse)) {
                         parsedResult = rawParse.map(normalizeItem);
                     } else if (typeof rawParse === 'object') {
+                        // Handle "data": [...] wrapper
                         const arrayVal = Object.values(rawParse).find(v => Array.isArray(v));
-                        if (arrayVal) parsedResult = arrayVal.map(normalizeItem);
-                        else parsedResult = [normalizeItem(rawParse)];
+                        if (arrayVal) {
+                            parsedResult = arrayVal.map(normalizeItem);
+                        } else {
+                            // Handle Object of Objects: { "0": {...}, "1": {...} }
+                            const possibleItems = Object.values(rawParse).filter(v => typeof v === 'object' && v !== null && (v.title || v.Title || v.TITLE));
+                            if (possibleItems.length > 0) {
+                                parsedResult = possibleItems.map(normalizeItem);
+                            } else {
+                                // Treat as single object response
+                                parsedResult = [normalizeItem(rawParse)];
+                            }
+                        }
                     } else {
                         throw new Error(`Unexpected JSON format from ${aiModel}`);
                     }
+                    // --- ROBUST JSON NORMALIZATION END ---
 
                 } else {
                     // Gemini Logic
@@ -934,19 +1033,20 @@ const App = () => {
                     resultText = resultText.replace(/```[a-z]*\s*/gi, '').replace(/```/g, '').trim();
                     let rawParse = JSON.parse(resultText);
 
-                    const normalizeItem = (item) => {
-                        if (!item || typeof item !== 'object') return item;
-                        const newItem = {};
-                        Object.keys(item).forEach(k => newItem[k.toLowerCase()] = item[k]);
-                        return newItem;
-                    };
-
                     if (Array.isArray(rawParse)) {
                         parsedResult = rawParse.map(normalizeItem);
                     } else if (typeof rawParse === 'object') {
                         const arrayVal = Object.values(rawParse).find(v => Array.isArray(v));
-                        if (arrayVal) parsedResult = arrayVal.map(normalizeItem);
-                        else parsedResult = [normalizeItem(rawParse)];
+                         if (arrayVal) {
+                            parsedResult = arrayVal.map(normalizeItem);
+                        } else {
+                            const possibleItems = Object.values(rawParse).filter(v => typeof v === 'object' && v !== null && (v.title || v.Title || v.TITLE));
+                             if (possibleItems.length > 0) {
+                                parsedResult = possibleItems.map(normalizeItem);
+                            } else {
+                                parsedResult = [normalizeItem(rawParse)];
+                            }
+                        }
                     }
                 }
             }
@@ -957,18 +1057,17 @@ const App = () => {
                 for (const res of parsedResult) {
                     // Check Title Length
                     const titleLen = res.title ? res.title.trim().length : 0;
-                    if (titleLen < MIN_TITLE_LENGTH) {
-                        console.warn(`Attempt ${attempt}: Title too short (${titleLen} chars). Retrying...`);
+                    if (titleLen < SAFE_MIN_TITLE_LENGTH) { // Use Safe Limit
+                        console.warn(`Attempt ${attempt}: Title too short (${titleLen} chars < ${SAFE_MIN_TITLE_LENGTH}). Retrying...`);
                         allPassed = false;
                         break;
                     }
                     
                     // Check Keyword Count
                     const kwString = res.keywords || "";
-                    // Count roughly by splitting commas
                     const kwCount = kwString.split(/[,;]+/).filter(k => k.trim().length > 0).length;
-                    if (kwCount < 35) { // Set a "safe" lower bound for retry logic (35 is acceptable to fail over to fallback padding)
-                         console.warn(`Attempt ${attempt}: Keywords too few (${kwCount}). Retrying...`);
+                    if (kwCount < SAFE_MIN_KEYWORD_COUNT) { // Use Safe Limit
+                         console.warn(`Attempt ${attempt}: Keywords too few (${kwCount} < ${SAFE_MIN_KEYWORD_COUNT}). Retrying...`);
                          allPassed = false;
                          break;
                     }
@@ -977,13 +1076,13 @@ const App = () => {
                     isValidResult = true;
                 }
             } else {
-                console.warn(`Attempt ${attempt}: Invalid result structure. Retrying...`);
+                console.warn(`Attempt ${attempt}: Result length mismatch or invalid structure. Retrying...`);
             }
         }
         // -------------------------
 
-        if (!Array.isArray(parsedResult)) {
-             throw new Error("AI response could not be parsed into a list of assets after multiple attempts.");
+        if (!isValidResult) {
+             throw new Error("Generation Failed: AI returned empty or invalid data after multiple attempts.");
         }
 
         const finalResults = {};
@@ -1034,6 +1133,19 @@ const App = () => {
                     parsedResult[idx].title = title;
                 } else {
                     parsedResult[idx].title = "";
+                }
+                
+                // --- APPROVAL STATUS NORMALIZATION ---
+                if (parsedResult[idx].approval_status) {
+                    const statusLower = String(parsedResult[idx].approval_status).toLowerCase();
+                    if (statusLower.includes('reject')) {
+                        parsedResult[idx].approval_status = "Rejected";
+                    } else if (statusLower.includes('accept')) {
+                         parsedResult[idx].approval_status = "Accepted";
+                    } else {
+                        // Default fallback
+                        parsedResult[idx].approval_status = "Accepted"; 
+                    }
                 }
                 // -----------------------------------
 
@@ -1135,11 +1247,17 @@ const App = () => {
                     const errorStr = error.toString();
                     
                     // Check for Rate Limit (429) or explicit "Rate limit" text
-                    if (errorStr.includes("429") || errorStr.includes("Rate limit")) {
+                    if (errorStr.includes("429") || errorStr.includes("Rate Limit")) {
                         console.warn(`Rate limit hit. Retrying in ${delay}ms...`);
                         await new Promise(resolve => setTimeout(resolve, delay));
                         delay = Math.min(delay * 2, 60000); // Backoff up to 60s
                         retries--;
+                    } else if (errorStr.includes("Invalid API Key") || errorStr.includes("401")) {
+                         // STOP RETRYING IF AUTH FAILS
+                         setIsKeyInvalid(true);
+                         setIsKeySaved(false);
+                         setUserApiKey('');
+                         retries = 0; 
                     } else if (errorStr.includes("API Key") || errorStr.includes("403") || errorStr.includes("400") || errorStr.includes("Invalid") || errorStr.includes("insufficient_quota")) {
                          setIsKeyInvalid(true);
                          setIsKeySaved(false);
@@ -1158,11 +1276,11 @@ const App = () => {
                    const errStr = lastError.toString();
                    if (errStr.includes("insufficient_quota")) {
                       displayError = "OpenAI Quota Exceeded. Check billing.";
-                   } else if (errStr.includes("API Key")) {
-                      displayError = "Invalid API Key.";
+                   } else if (errStr.includes("Invalid API Key") || errStr.includes("401")) {
+                      displayError = "Invalid API Key. Please check your settings.";
                    } else if (errStr.includes("support Vision")) {
                       displayError = "Model Error: Selected model does not support images.";
-                   } else if (errStr.includes("429")) {
+                   } else if (errStr.includes("429") || errStr.includes("Rate Limit")) {
                       displayError = "Rate Limit Exceeded. Try again later.";
                    } else {
                        displayError = errStr.length > 50 ? errStr.substring(0, 50) + "..." : errStr;
@@ -1199,22 +1317,70 @@ const App = () => {
   };
 
   const handleExportCSV = (filesToExport = files) => {
-    const csvHeader = "Filename,Title,Keywords,Category\n";
-    const csvRows = filesToExport.map(f => {
-      if (f.status === 'pending' || f.status === 'processing' || f.status === 'error') return null;
+    // --- DYNAMIC EXPORT LOGIC ---
+    let csvHeader = "";
+    let csvContent = "";
 
-      const title = `"${f.metadata.title ? f.metadata.title.replace(/"/g, '""') : ''}"`;
-      const keywords = `"${f.metadata.keywords ? f.metadata.keywords.replace(/"/g, '""') : ''}"`;
-      const filename = f.name; 
-      const category = f.categoryId || 8; 
-      return `${filename},${title},${keywords},${category}`;
-    }).filter(row => row !== null).join("\n");
+    if (targetPlatform === 'adobe') {
+        csvHeader = "Filename,Title,Keywords,Category\n";
+        csvContent = filesToExport.map(f => {
+            if (f.status === 'pending' || f.status === 'processing' || f.status === 'error') return null;
+            const title = `"${f.metadata.title ? f.metadata.title.replace(/"/g, '""') : ''}"`;
+            const keywords = `"${f.metadata.keywords ? f.metadata.keywords.replace(/"/g, '""') : ''}"`;
+            const filename = f.name; 
+            const category = f.categoryId || 8; 
+            return `${filename},${title},${keywords},${category}`;
+        }).filter(row => row !== null).join("\n");
 
-    const blob = new Blob([csvHeader + csvRows], { type: 'text/csv' });
+    } else if (targetPlatform === 'freepik') {
+        // Freepik format: File name, Title, Keywords, Prompt, Model
+        // Updated per user request to include Prompt (using Title) and Model
+        csvHeader = "File name,Title,Keywords,Prompt,Model\n";
+        csvContent = filesToExport.map(f => {
+            if (f.status === 'pending' || f.status === 'processing' || f.status === 'error') return null;
+            
+            const title = `"${f.metadata.title ? f.metadata.title.replace(/"/g, '""') : ''}"`;
+            const keywords = `"${f.metadata.keywords ? f.metadata.keywords.replace(/"/g, '""') : ''}"`;
+            const prompt = title; // Use title as prompt
+            const filename = f.name; 
+            const model = freepikModel; // Use state
+
+            return `${filename},${title},${keywords},${prompt},${model}`;
+        }).filter(row => row !== null).join("\n");
+
+    } else if (targetPlatform === 'vecteezy') {
+         // Vecteezy format: Filename, Title, Description, Keywords, License
+         csvHeader = "Filename,Title,Description,Keywords,License\n";
+         csvContent = filesToExport.map(f => {
+            if (f.status === 'pending' || f.status === 'processing' || f.status === 'error') return null;
+            const title = `"${f.metadata.title ? f.metadata.title.replace(/"/g, '""') : ''}"`;
+            const description = title; // Duplicate title for description
+            const keywords = `"${f.metadata.keywords ? f.metadata.keywords.replace(/"/g, '""') : ''}"`;
+            const filename = f.name; 
+            const license = "Free"; // Defaulting to Free for standard uploads
+            return `${filename},${title},${description},${keywords},${license}`;
+        }).filter(row => row !== null).join("\n");
+
+    } else if (targetPlatform === 'shutterstock') {
+         // Shutterstock format: Filename, Description, Keywords, Categories
+         csvHeader = "Filename,Description,Keywords,Categories\n";
+         csvContent = filesToExport.map(f => {
+            if (f.status === 'pending' || f.status === 'processing' || f.status === 'error') return null;
+            const description = `"${f.metadata.title ? f.metadata.title.replace(/"/g, '""') : ''}"`;
+            const keywords = `"${f.metadata.keywords ? f.metadata.keywords.replace(/"/g, '""') : ''}"`;
+            const filename = f.name;
+            const catObj = ADOBE_CATEGORIES.find(c => c.id === (f.categoryId || 8));
+            const category = catObj ? `"${catObj.name}"` : "";
+
+            return `${filename},${description},${keywords},${category}`;
+        }).filter(row => row !== null).join("\n");
+    }
+
+    const blob = new Blob([csvHeader + csvContent], { type: 'text/csv' });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `metagen_export_${new Date().toISOString().slice(0,10)}.csv`;
+    a.download = `metagen_${targetPlatform}_${new Date().toISOString().slice(0,10)}.csv`;
     a.click();
   };
 
@@ -1283,10 +1449,16 @@ const App = () => {
     else if (aiModel === 'chatgpt') keyKey = 'hackymetagen_openai_api_key';
     else keyKey = 'hackymetagen_api_key';
     
-    // Check key
-    let activeKey = apiKeyRef.current || localStorage.getItem(keyKey) || userApiKey || apiKey;
+    // --- FIX: Check both Multi-Key Pool and Legacy Single Key ---
+    // This ensures that if keys exist in the new pool, we don't block the upload
+    const keysPool = storedKeys[aiModel] || [];
+    const hasStoredKeys = keysPool.length > 0;
+    const hasLegacyKey = apiKeyRef.current || localStorage.getItem(keyKey) || userApiKey || apiKey;
+    
+    // We consider it valid if EITHER a pool exists OR a single key exists
+    const hasValidKey = hasStoredKeys || !!hasLegacyKey;
 
-    if (REQUIRE_USER_API_KEY && !activeKey) {
+    if (REQUIRE_USER_API_KEY && !hasValidKey) {
       setShowTutorial(true);
       if (fileInputRef.current) fileInputRef.current.value = '';
       return;
@@ -1350,7 +1522,7 @@ const App = () => {
     if (isAutoGenerate) {
         runBatchGeneration(newFiles);
     }
-  }, [contentType, files.length, selectedFileId, isAutoGenerate, useAiCategory, preserveExtension, csvExtension, userApiKey, aiModel]);
+  }, [contentType, files.length, selectedFileId, isAutoGenerate, useAiCategory, preserveExtension, csvExtension, userApiKey, aiModel, storedKeys]);
 
   const removeFile = (id, e) => {
     e.stopPropagation();
@@ -1549,46 +1721,21 @@ const App = () => {
           <div className={`max-w-md w-full rounded-2xl shadow-2xl overflow-hidden ${theme === 'dark' ? 'bg-slate-800' : 'bg-white'}`}>
               <div className="p-6">
                   <div className="flex justify-between items-center mb-4">
-                    <h3 className="text-xl font-bold">
-                        How to get your {aiModel === 'groq' ? 'Groq' : aiModel === 'chatgpt' ? 'OpenAI' : 'Gemini'} API Key
-                    </h3>
+                    <h3 className="text-xl font-bold">How to get your API Key</h3>
                     <button onClick={() => setShowTutorial(false)} className="text-slate-400 hover:text-red-500"><X size={20}/></button>
                   </div>
                   
-                  {aiModel === 'gemini' && (
-                      <ol className={`list-decimal list-inside space-y-3 mb-6 text-sm ${theme === 'dark' ? 'text-slate-300' : 'text-slate-600'}`}>
-                          <li>Go to <a href="https://aistudio.google.com/app/api-keys" target="_blank" rel="noreferrer" className="font-semibold text-indigo-500 hover:underline">Google AI Studio</a>.</li>
-                          <li>Log in with your Google account.</li>
-                          <li>Click the blue <span className="font-semibold">"Create API Key"</span> button.</li>
-                          <li>Copy the key and paste it into the box above.</li>
-                      </ol>
-                  )}
-
-                  {aiModel === 'groq' && (
-                      <ol className={`list-decimal list-inside space-y-3 mb-6 text-sm ${theme === 'dark' ? 'text-slate-300' : 'text-slate-600'}`}>
-                          <li>Go to <a href="https://console.groq.com/keys" target="_blank" rel="noreferrer" className="font-semibold text-indigo-500 hover:underline">Groq Cloud Console</a>.</li>
-                          <li>Log in or Sign up.</li>
-                          <li>Click <span className="font-semibold">"Create API Key"</span>.</li>
-                          <li>Name your key and copy it immediately.</li>
-                      </ol>
-                  )}
-
-                  {aiModel === 'chatgpt' && (
-                      <ol className={`list-decimal list-inside space-y-3 mb-6 text-sm ${theme === 'dark' ? 'text-slate-300' : 'text-slate-600'}`}>
-                          <li>Go to <a href="https://platform.openai.com/api-keys" target="_blank" rel="noreferrer" className="font-semibold text-indigo-500 hover:underline">OpenAI Platform</a>.</li>
-                          <li>Log in to your OpenAI account.</li>
-                          <li>Click <span className="font-semibold">"Create new secret key"</span>.</li>
-                          <li>Ensure you have billing credits available.</li>
-                      </ol>
-                  )}
+                  <ol className={`list-decimal list-inside space-y-3 mb-6 text-sm ${theme === 'dark' ? 'text-slate-300' : 'text-slate-600'}`}>
+                      <li>Go to <a href="https://aistudio.google.com" target="_blank" rel="noreferrer" className="font-semibold text-indigo-500 hover:underline">Google AI Studio</a>.</li>
+                      <li>Log in with your Google account.</li>
+                      <li>Click the blue <span className="font-semibold">"Get API Key"</span> button.</li>
+                      <li>Create a key in a new project.</li>
+                      <li>Copy the key and paste it into the box above.</li>
+                  </ol>
                   
                   <div className="flex gap-3">
                     <a 
-                        href={
-                            aiModel === 'groq' ? "https://console.groq.com/keys" :
-                            aiModel === 'chatgpt' ? "https://platform.openai.com/api-keys" :
-                            "https://aistudio.google.com/app/api-keys"
-                        }
+                        href="https://aistudio.google.com/app/api-keys" 
                         target="_blank" 
                         rel="noreferrer"
                         className="flex-1 py-3 text-center bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-semibold flex items-center justify-center gap-2 transition-colors"
@@ -1633,7 +1780,7 @@ const App = () => {
         MetaGen
       </span>
       <span className="text-xs align-top bg-indigo-500/20 text-indigo-500 px-1.5 py-0.5 rounded ml-1">
-        3.9
+        4.0
       </span>
     </h1>
   </div>
@@ -1694,39 +1841,32 @@ const App = () => {
 
     {/* API Key Input */}
     <div className="flex items-center gap-2">
+      {/* Key Badge */}
+      {storedKeys[aiModel] && storedKeys[aiModel].length > 0 && (
+         <div className={`flex items-center gap-1 px-2 py-1.5 rounded-lg border text-xs font-medium ${
+            theme === 'dark' ? 'bg-slate-800 border-slate-700 text-slate-300' : 'bg-slate-100 border-slate-300 text-slate-600'
+         }`}>
+             <Key size={12} className="text-green-500" />
+             <span>{storedKeys[aiModel].length} Keys</span>
+             <button 
+                type="button"
+                onClick={handleClearKeys}
+                className="ml-1 p-0.5 hover:text-red-500 transition-colors cursor-pointer"
+                title="Clear all keys for this model"
+             >
+                 <Trash2 size={12} />
+             </button>
+         </div>
+      )}
+
       <input
         type="text"
-        placeholder={
-          isKeyInvalid
-            ? 'Check Key'
-            : isKeySaved
-            ? 'Ready'
-            : aiModel === 'groq' ? 'Enter Groq API Key' : aiModel === 'chatgpt' ? 'Enter OpenAI Key' : 'Enter Gemini API Key'
-        }
+        placeholder="Add Key..."
         value={userApiKey}
-        onChange={(e) => {
-          const val = e.target.value;
-          setUserApiKey(val);
-
-          // Clear stored key if user clears input
-          if (val === '') {
-            let keyKey;
-            if (aiModel === 'groq') keyKey = 'hackymetagen_groq_api_key';
-            else if (aiModel === 'chatgpt') keyKey = 'hackymetagen_openai_api_key';
-            else keyKey = 'hackymetagen_api_key';
-            localStorage.removeItem(keyKey);
-            apiKeyRef.current = '';
-            setIsKeySaved(false);
-          } else {
-            setIsKeySaved(false);
-          }
-          setIsKeyInvalid(false);
-        }}
+        onChange={(e) => setUserApiKey(e.target.value)}
         className={`text-xs px-3 py-2 rounded-lg border transition-all w-24 focus:w-48 sm:w-32 sm:focus:w-64 ${
           isKeyInvalid
             ? 'bg-red-500/10 border-red-500 text-red-500 placeholder:text-red-500'
-            : isKeySaved
-            ? 'bg-blue-500/10 border-blue-500 text-blue-500 placeholder:text-blue-500 text-center'
             : theme === 'dark'
             ? 'bg-slate-800 border-slate-700 text-white'
             : 'bg-slate-100 border-slate-300 text-slate-900'
@@ -1738,7 +1878,7 @@ const App = () => {
         disabled={isVerifying}
         className="p-2 rounded-lg border border-slate-700 hover:bg-slate-800 text-slate-400"
       >
-        {isVerifying ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+        {isVerifying ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
       </button>
 
       <button
@@ -1840,6 +1980,24 @@ const App = () => {
         {/* LEFT COLUMN: Upload & Batch List */}
         <div className={`w-full ${viewMode === 'batch' ? 'lg:w-1/4' : 'lg:w-1/3'} flex flex-col gap-4 transition-all duration-300 lg:h-full`}>
           
+          {/* Platform Selector */}
+          <div className={`p-1 rounded-xl flex ${theme === 'dark' ? 'bg-slate-800' : 'bg-slate-200'}`}>
+            {['adobe', 'freepik', 'vecteezy', 'shutterstock'].map((platform) => (
+              <button
+                key={platform}
+                onClick={() => setTargetPlatform(platform)}
+                className={`flex-1 py-2 text-[10px] font-bold uppercase tracking-wide rounded-lg flex items-center justify-center transition-all ${
+                  targetPlatform === platform
+                    ? 'bg-indigo-600 text-white shadow-lg'
+                    : 'text-slate-500 hover:text-slate-300'
+                }`}
+                title={`Generate for ${platform.charAt(0).toUpperCase() + platform.slice(1)}`}
+              >
+                {platform === 'shutterstock' ? 'Shutter' : platform}
+              </button>
+            ))}
+          </div>
+
           {/* Content Type Tabs */}
           <div className={`p-1 rounded-xl flex ${theme === 'dark' ? 'bg-slate-800' : 'bg-slate-200'}`}>
             {['image', 'video', 'vector'].map((type) => (
@@ -2107,6 +2265,28 @@ const App = () => {
             </div>
           </div>
 
+          {/* New Freepik Model Selector */}
+          {targetPlatform === 'freepik' && (
+            <div className="mt-2">
+                <label className={`text-[10px] font-bold uppercase tracking-wider mb-1 block pl-1 ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>
+                    Select AI Model used
+                </label>
+                <select
+                    value={freepikModel}
+                    onChange={(e) => setFreepikModel(e.target.value)}
+                    className={`w-full text-xs p-2.5 rounded-xl border font-medium transition-all cursor-pointer ${
+                        theme === 'dark' 
+                        ? 'bg-slate-800 border-slate-700 text-slate-300 focus:border-indigo-500' 
+                        : 'bg-white border-slate-300 text-slate-600 focus:border-indigo-500'
+                    }`}
+                >
+                    {AI_GENERATORS.map(model => (
+                        <option key={model} value={model}>{model}</option>
+                    ))}
+                </select>
+            </div>
+          )}
+
           {/* Batch List - Updated height for better visibility on mobile (h-64 instead of h-48/80) */}
           <div className={`flex-1 overflow-y-auto rounded-xl border h-64 sm:h-80 lg:h-full lg:flex-1 ${theme === 'dark' ? 'bg-slate-800/30 border-slate-800' : 'bg-white border-slate-200'} p-2 space-y-2`}>
             {files.length === 0 ? (
@@ -2202,7 +2382,7 @@ const App = () => {
                       ? 'bg-green-600 hover:bg-green-700 text-white border-green-600 shadow-lg shadow-green-500/20'
                       : theme === 'dark' ? 'border-slate-700 hover:bg-slate-800' : 'border-slate-300 hover:bg-slate-100'
                   }`}
-                  title="Export CSV manually"
+                  title={`Export CSV for ${targetPlatform}`}
                   disabled={completeFiles.length === 0}
                 >
                   <Download size={18} />
@@ -2730,18 +2910,37 @@ const App = () => {
             </span>
           </div>
           
-          <button 
-            onClick={() => handleExportCSV()}
-            disabled={completeFiles.length === 0}
-            className={`px-6 py-2 rounded-lg font-semibold transition-all flex items-center gap-2 ${
-              completeFiles.length > 0 
-                ? 'bg-indigo-600 hover:bg-indigo-700 text-white' 
-                : 'bg-slate-700 text-slate-400 cursor-not-allowed'
-            }`}
-          >
-            Download Adobe CSV
-            <Download size={16} />
-          </button>
+          <div className="flex items-center gap-2">
+             <div className="flex rounded-lg overflow-hidden border border-slate-600 h-9 hidden sm:flex">
+                {['adobe', 'freepik', 'vecteezy', 'shutterstock'].map((platform) => (
+                    <button 
+                    key={platform}
+                    onClick={() => setTargetPlatform(platform)}
+                    className={`px-3 text-xs font-semibold uppercase tracking-wide transition-colors ${
+                        targetPlatform === platform
+                        ? 'bg-indigo-600 text-white'
+                        : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+                    }`}
+                    >
+                     {platform === 'shutterstock' ? 'Shutter' : platform}
+                    </button>
+                ))}
+             </div>
+             
+              <button 
+                onClick={() => handleExportCSV()}
+                disabled={completeFiles.length === 0}
+                className={`px-6 py-2 rounded-lg font-semibold transition-all flex items-center gap-2 ${
+                  completeFiles.length > 0 
+                    ? 'bg-indigo-600 hover:bg-indigo-700 text-white' 
+                    : 'bg-slate-700 text-slate-400 cursor-not-allowed'
+                }`}
+                title={`Download CSV for ${targetPlatform.charAt(0).toUpperCase() + targetPlatform.slice(1)}`}
+              >
+                Download CSV
+                <Download size={16} />
+              </button>
+          </div>
         </div>
       )}
     </div>
